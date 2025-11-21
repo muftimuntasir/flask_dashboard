@@ -1,0 +1,86 @@
+/* static/css/styles.css - replace entire file with this */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+
+:root{
+  --bg: #f6f8fa;
+  --card: #ffffff;
+  --muted: #6c757d;
+  --accent: #2563eb;
+  --radius: 12px;
+  --shadow: 0 6px 18px rgba(22,28,37,0.06);
+}
+
+/* reset */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  background: var(--bg);
+  color: #111827;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* container width */
+.container { max-width: 1140px; }
+
+/* card */
+.card {
+  background: var(--card);
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* chart wrapper provides predictable aspect ratio */
+.chart-wrapper {
+  position: relative;
+  width: 100%;
+  padding-bottom: 46%; /* default aspect ratio; adjust to taste */
+  height: 0;
+}
+.chart-wrapper.small { padding-bottom: 36%; }
+.chart-wrapper canvas {
+  position: absolute !important;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  display: block;
+}
+
+/* ensure no conflicting inline heights from other styles */
+canvas { max-width: 100% !important; }
+
+/* responsive tweaks */
+@media (max-width: 576px) {
+  .chart-wrapper { padding-bottom: 60%; }
+  .container { padding-left: 0.75rem; padding-right: 0.75rem; }
+}
+
+
+/* Force canvas to exactly fill the wrapper and prevent inline style from expanding it */
+.chart-wrapper {
+  position: relative;
+  width: 100%;
+  padding-bottom: 46%;
+  height: 0;
+  overflow: hidden;
+}
+.chart-wrapper.small { padding-bottom: 36%; }
+
+/* IMPORTANT overrides */
+.chart-wrapper canvas {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;      /* override inline style height */
+  max-height: 100% !important;  /* safety */
+  display: block !important;
+}
+
+/* A final safety cap: if something still tries to make it gigantic, cap it */
+canvas {
+  max-height: 500px !important; /* you can increase if you want taller charts on desktop */
+  box-sizing: border-box;
+}
