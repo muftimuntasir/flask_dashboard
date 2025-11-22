@@ -35,7 +35,7 @@ def index():
 
 
 def get_odoo_dashboard_data():
-    url = "http://220.247.162.25:8069"
+    url = "http://192.168.2.15:8069"
     db = "LEIH"
     uid = 74
     password = "api@mk"
@@ -61,12 +61,12 @@ def get_odoo_dashboard_data():
 @app.route('/api/data', methods=['GET'])
 def api_data():
     
-    #odoo_data = get_odoo_dashboard_data()
-    odoo_data = {'dental_income': {'amount': 22000, 'count': 6},
-            'dental_opd': {'amount': 1200, 'count': 4},
-            'opd_income': {'amount': 93400, 'count': 301},
-            'physiotherapy_bill': {'amount': 22000, 'count': 6},
-            'physiotherpay_opd': {'amount': 1200, 'count': 4}}
+    odoo_data = get_odoo_dashboard_data()
+    # odoo_data = {'dental_income': {'amount': 22000, 'count': 6},
+    #         'dental_opd': {'amount': 1200, 'count': 4},
+    #         'opd_income': {'amount': 93400, 'count': 301},
+    #         'physiotherapy_bill': {'amount': 22000, 'count': 6},
+    #         'physiotherpay_opd': {'amount': 1200, 'count': 4}}
 
   
 
