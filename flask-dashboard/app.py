@@ -34,34 +34,77 @@ def index():
     return render_template('dashboard.html')
 
 
-def get_odoo_dashboard_data():
-    url = "http://192.168.2.15:8069"
-    db = "LEIH"
-    uid = 74
+def get_odoo_dashboard_data(params):
+    url = "http://192.168.3.94:8069"
+    dbname = "181125_leih"
+    username = "api"
     password = "api@mk"
-    model = "dashboard.dashboard"
-    method = "custom_dashboard"
 
     try:
+        print("Connecting to Odoo...")
+
+        # Step 1 — get uid
         common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common")
+        uid = common.authenticate(dbname, username, password, {})
+        print("UID:", uid)
+
+        if not uid:
+            print("Authentication failed. Wrong username or password.")
+            return None
+
+        print("Authentication successful.")
+
+        # Step 2 — call the method
         models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object")
 
-        # Call the custom_dashboard method
-        result = models.execute_kw(
-            db, uid, password,
-            model, method,
-            []  # No arguments
-        )
+        if params and len(params) == 2:
+            start_date = params[0].split("T")[0]   # '2025-11-17'
+            end_date = params[1].split("T")[0]
+
+            result = models.execute_kw(
+                dbname, uid, password,
+                "dashboard.dashboard",
+                "custom_dashboard",
+                [],
+                {
+                "start_date": start_date,
+                "end_date": end_date
+                }
+            )
+        else:
+            result = models.execute_kw(
+                dbname,
+                uid,
+                password,
+                "dashboard.dashboard",
+                "custom_dashboard",
+                []
+            )
+
+        print("Odoo returned:", result)
         return result
+
     except Exception as e:
-        print("Error connecting to Odoo:", e)
+        print("Error:", str(e))
         return None
+
 
 
 @app.route('/api/data', methods=['GET'])
 def api_data():
-    
-    odoo_data = get_odoo_dashboard_data()
+    from_date = request.args.get("from")
+    to_date = request.args.get("to")
+
+    # If both params exist → pass them, otherwise → []
+    if from_date and to_date:
+        params = [from_date, to_date]
+    else:
+        params = []
+
+    odoo_data = get_odoo_dashboard_data(params)
+    # import pdb;pdb.set_trace()
+    # odoo_data = get_odoo_dashboard_data()
+
     # odoo_data = {'dental_income': {'amount': 22000, 'count': 6},
     #         'dental_opd': {'amount': 1200, 'count': 4},
     #         'opd_income': {'amount': 93400, 'count': 301},
