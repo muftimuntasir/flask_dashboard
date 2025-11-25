@@ -201,3 +201,76 @@ document.addEventListener('DOMContentLoaded', function () {
       if (e.key === 'Enter') fetchDataAndUpdate();
     });
 });
+
+
+
+// ------- TRAFFIC SOURCES CHART (Bar + Line) -----------
+var trafficOptions = {
+  series: [
+    {
+      name: 'Doctors',
+      type: 'column',
+      data: [400, 550, 480, 350, 680, 290, 380, 720, 450, 310, 230, 160]
+    },
+    {
+      name: 'Department',
+      type: 'line',
+      data: [45, 70, 50, 75, 42, 60, 54, 48]
+    }
+  ],
+  chart: {
+    height: 330,
+    type: 'line',
+    stacked: false
+  },
+  stroke: {
+    width: [0, 4]
+  },
+  plotOptions: {
+    bar: { columnWidth: "55%" }
+  },
+  colors: ["#2196F3", "#00E676"],
+  labels: [
+    "Rinku", "Raju", "Sohana", "Rezaul", "Shahinur", "Rinku", "Raju", "Sohana", "Rezaul", "Shahinur", "Rinku", "Raju", "Sohana", "Rezaul", "Shahinur"
+  ],
+  yaxis: [
+    {
+      title: { text: "Doctors Income" }
+    },
+    {
+      opposite: true,
+      title: { text: "Department Income" }
+    }
+  ],
+  legend: { position: 'bottom' }
+};
+new ApexCharts(document.querySelector("#traffic_sources_chart"), trafficOptions).render();
+
+
+// ------- INCOME DONUT / PROGRESS RING CHART ----------
+var incomePercentage = 75; // <-- You can replace with API percentage
+
+var incomeOptions = {
+  chart: {
+    type: "radialBar",
+    height: 330
+  },
+  series: [incomePercentage],
+  colors: ["#2196F3"],
+  plotOptions: {
+    radialBar: {
+      hollow: { size: "65%" },
+      dataLabels: {
+        name: { show: false },
+        value: {
+          fontSize: "32px",
+          show: true,
+          formatter: val => `${val}`
+        }
+      }
+    }
+  },
+  labels: ["Income"]
+};
+new ApexCharts(document.querySelector("#income_progress_chart"), incomeOptions).render();
+
