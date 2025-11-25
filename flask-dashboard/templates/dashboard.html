@@ -130,6 +130,28 @@
   </div>
 </div>
 
+<div class="row mt-4">
+  <div class="col-md-8">
+    <div class="card">
+      <div class="card-header">Doctor Wise Income</div>
+      <div class="card-body">
+        <div id="traffic_sources_chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-header">Total Income</div>
+      <div class="card-body">
+        <div id="income_progress_chart"></div>
+      </div>
+    </div>
+  </div>
+  <br>
+</div>
+
+
 <!-- Charts grid -->
 <div class="row g-3">
   <div class="col-12 col-lg-8">
@@ -174,6 +196,9 @@
     </div>
   </div>
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+
 
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 <script>
