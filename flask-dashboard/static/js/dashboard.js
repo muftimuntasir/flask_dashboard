@@ -2,11 +2,11 @@
 //  GLOBAL CHART REFS
 // =====================
 let lineChart, barChart, doughnutChart, stackedChart;
+let trafficChart, incomeDonutChart;
 
 function formatNumber(n) {
   return Number(n).toFixed(2);
 }
-
 
 function updateFinancialStats(stats) {
   const get = id => document.getElementById(id);
@@ -14,27 +14,27 @@ function updateFinancialStats(stats) {
 
   if (get("opd_income_stat"))
     get("opd_income_stat").textContent =
-      `${stats.opd_income.amount} / ${stats.opd_income.count}`;
+      `${stats.opd_income?.amount ?? 0} / ${stats.opd_income?.count ?? 0}`;
 
   if (get("dental_income_stat"))
     get("dental_income_stat").textContent =
-      `${stats.dental_income.amount} / ${stats.dental_income.count}`;
+      `${stats.dental_income?.amount ?? 0} / ${stats.dental_income?.count ?? 0}`;
 
   if (get("dental_opd_stat"))
     get("dental_opd_stat").textContent =
-      `${stats.dental_opd.amount} / ${stats.dental_opd.count}`;
+      `${stats.dental_opd?.amount ?? 0} / ${stats.dental_opd?.count ?? 0}`;
 
   if (get("physio_bill_stat"))
     get("physio_bill_stat").textContent =
-      `${stats.physiotherapy_bill.amount} / ${stats.physiotherapy_bill.count}`;
+      `${stats.physiotherapy_bill?.amount ?? 0} / ${stats.physiotherapy_bill?.count ?? 0}`;
 
   if (get("physio_opd_stat"))
     get("physio_opd_stat").textContent =
-      `${stats.physiotherpay_opd.amount} / ${stats.physiotherpay_opd.count}`;
+      `${stats.physiotherpay_opd?.amount ?? 0} / ${stats.physiotherpay_opd?.count ?? 0}`;
 }
 
-
 function renderEmptyCharts() {
+  // Chart.js charts (existing)
   const ctxLine = document.getElementById('lineChart').getContext('2d');
   const ctxBar = document.getElementById('barChart').getContext('2d');
   const ctxDough = document.getElementById('doughnutChart').getContext('2d');
@@ -70,6 +70,54 @@ function renderEmptyCharts() {
       }
     }
   });
+
+  // ApexCharts: initialize empty traffic chart (bar + line)
+  // Ensure ApexCharts script is loaded in HTML before this script runs.
+  trafficChart = new ApexCharts(
+    document.querySelector("#traffic_sources_chart"),
+    {
+      series: [
+        { name: 'Doctor Income', type: 'column', data: [] },
+        { name: 'Patients', type: 'line', data: [] }
+      ],
+      chart: { height: 330, type: 'line', stacked: false },
+      stroke: { width: [0, 3] },
+      plotOptions: { bar: { columnWidth: "55%" } },
+      colors: ["#2196F3", "#00E676"],
+      labels: [],
+      yaxis: [
+        { title: { text: "Income (Tk)" } },
+        { opposite: true, title: { text: "Patients" } }
+      ],
+      legend: { position: 'bottom' }
+    }
+  );
+  trafficChart.render();
+
+  // ApexCharts: initialize empty income donut chart
+  incomeDonutChart = new ApexCharts(
+    document.querySelector("#income_progress_chart"),
+    {
+      chart: { type: "radialBar", height: 330 },
+      series: [0],
+      colors: ["#2196F3"],
+      plotOptions: {
+        radialBar: {
+          hollow: { size: "65%" },
+          dataLabels: {
+            name: { show: false },
+            value: {
+              fontSize: "32px",
+              show: true,
+              formatter: val => `${val}%`
+            }
+          }
+        }
+      },
+      labels: ["Income"]
+    }
+  );
+  incomeDonutChart.render();
 }
 
 // =====================
@@ -79,14 +127,19 @@ function updateStatsAndTable(resp) {
   const records = resp.records || [];
   const total = records.reduce((s, r) => s + Number(r.value || 0), 0);
 
-  document.getElementById('statCount').innerText = records.length;
-  document.getElementById('statSum').innerText = formatNumber(total);
-  document.getElementById('statAvg').innerText =
+  const elStatCount = document.getElementById('statCount');
+  const elStatSum = document.getElementById('statSum');
+  const elStatAvg = document.getElementById('statAvg');
+  const elStatCats = document.getElementById('statCats');
+
+  if (elStatCount) elStatCount.innerText = records.length;
+  if (elStatSum) elStatSum.innerText = formatNumber(total);
+  if (elStatAvg) elStatAvg.innerText =
     records.length ? formatNumber(total / records.length) : '—';
-  document.getElementById('statCats').innerText =
-    (resp.categories || []).length;
+  if (elStatCats) elStatCats.innerText = (resp.categories || []).length;
 
   const tbody = document.getElementById('recordsTbody');
+  if (!tbody) return;
   tbody.innerHTML = '';
 
   records
@@ -110,9 +163,9 @@ function updateStatsAndTable(resp) {
 //   FETCH + UPDATE
 // =====================
 function fetchDataAndUpdate() {
-  const q = document.getElementById('searchInput').value.trim();
-  const fromVal = document.getElementById('fromInput').value;
-  const toVal = document.getElementById('toInput').value;
+  const q = document.getElementById('searchInput')?.value?.trim() || '';
+  const fromVal = document.getElementById('fromInput')?.value || '';
+  const toVal = document.getElementById('toInput')?.value || '';
 
   const params = new URLSearchParams();
   if (q) params.set('q', q);
@@ -120,32 +173,88 @@ function fetchDataAndUpdate() {
   if (toVal) params.set('to', toVal);
 
   fetch('/api/data?' + params.toString())
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error("Network response was not ok");
+      return r.json();
+    })
     .then(resp => {
 
-      // 🔥 1) Update your new financial stats (amount / count)
-     
-      updateFinancialStats(resp.stats);
+      const stats = resp.stats || {};
 
-      // 🔥 2) Update charts
+      // 1) Update financial stats cards (amount / count)
+      updateFinancialStats(stats);
+
+      // 2) Chart.js timeseries line
       const ts = resp.timeseries || [];
       const labels = ts.map(x => x.date);
       const data = ts.map(x => x.total);
 
-      lineChart.data.labels = labels;
-      lineChart.data.datasets = [{ label: 'Total', data: data, fill: true }];
-      lineChart.update();
+      if (lineChart) {
+        lineChart.data.labels = labels;
+        lineChart.data.datasets = [{ label: 'Total', data: data, fill: true }];
+        lineChart.update();
+      }
 
+      // 3) Chart.js categories bar
       const cats = resp.categories || [];
-      barChart.data.labels = cats.map(x => x.category);
-      barChart.data.datasets = [{ label: 'Sum', data: cats.map(x => x.total) }];
-      barChart.update();
+      if (barChart) {
+        barChart.data.labels = cats.map(x => x.category);
+        barChart.data.datasets = [{ label: 'Sum', data: cats.map(x => x.total) }];
+        barChart.update();
+      }
 
+      // 4) Chart.js doughnut (top labels)
       const top = resp.top_labels || [];
-      doughnutChart.data.labels = top.map(x => x.label);
-      doughnutChart.data.datasets = [{ data: top.map(x => x.total) }];
-      doughnutChart.update();
+      if (doughnutChart) {
+        doughnutChart.data.labels = top.map(x => x.label);
+        doughnutChart.data.datasets = [{ data: top.map(x => x.total) }];
+        doughnutChart.update();
+      }
 
+      // 5) ApexCharts: trafficChart and incomeDonutChart from stats.doctor_total_income
+      const docs = stats.doctor_total_income || [];
+
+      if (trafficChart) {
+        if (docs.length) {
+          const labels = docs.map(d => d.doctor_name);
+          const incomes = docs.map(d => Number(d.income || 0));
+          const counts = docs.map(d => Number(d.count || 0));
+
+          // update labels & series
+          trafficChart.updateOptions({
+            labels: labels
+          });
+
+          trafficChart.updateSeries([
+            { name: 'Doctor Income', type: 'column', data: incomes },
+            { name: 'Patients', type: 'line', data: counts }
+          ]);
+        } else {
+          // clear if no docs
+          trafficChart.updateOptions({ labels: [] });
+          trafficChart.updateSeries([
+            { name: 'Doctor Income', type: 'column', data: [] },
+            { name: 'Patients', type: 'line', data: [] }
+          ]);
+        }
+      }
+
+      if (incomeDonutChart) {
+        if (docs.length) {
+          const incomes = docs.map(d => Number(d.income || 0));
+          const totalIncome = incomes.reduce((a, b) => a + b, 0);
+          const maxIncome = incomes.length ? Math.max(...incomes) : 1;
+          const target = maxIncome * 2 || 1; // as requested: highest * 2
+          let percent = Math.round((totalIncome / target) * 100);
+          // bound percent 0..100
+          percent = Math.max(0, Math.min(100, percent));
+          incomeDonutChart.updateSeries([percent]);
+        } else {
+          incomeDonutChart.updateSeries([0]);
+        }
+      }
+
+      // 6) Chart.js stacked chart (same logic as before)
       const recs = resp.records || [];
       const daySet = [...new Set(
         recs.map(r => new Date(r.created_at).toISOString().split('T')[0])
@@ -166,20 +275,23 @@ function fetchDataAndUpdate() {
 
       recs.forEach(r => {
         const d = new Date(r.created_at).toISOString().split('T')[0];
-        if (d in dayIndex && r.category in catIndex) {
-          dataGrid[catIndex[r.category]][dayIndex[d]] += Number(r.value);
+        if ((d in dayIndex) && (r.category in catIndex)) {
+          dataGrid[catIndex[r.category]][dayIndex[d]] += Number(r.value || 0);
         }
       });
 
-      stackedChart.data.labels = daySet;
-      stackedChart.data.datasets = catSet.map((cat, idx) => ({
-        label: cat,
-        data: dataGrid[idx]
-      }));
-      stackedChart.update();
+      if (stackedChart) {
+        stackedChart.data.labels = daySet;
+        stackedChart.data.datasets = catSet.map((cat, idx) => ({
+          label: cat,
+          data: dataGrid[idx]
+        }));
+        stackedChart.update();
+      }
 
-      // 🔥 3) Update table + general stats
+      // 7) Update table and other stats
       updateStatsAndTable(resp);
+
     })
     .catch(err => {
       console.error("Failed to fetch data:", err);
@@ -196,81 +308,10 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('searchBtn')
     .addEventListener('click', fetchDataAndUpdate);
 
-  document.getElementById('searchInput')
-    .addEventListener('keydown', (e) => {
+  const searchEl = document.getElementById('searchInput');
+  if (searchEl) {
+    searchEl.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') fetchDataAndUpdate();
     });
+  }
 });
-
-
-
-// ------- TRAFFIC SOURCES CHART (Bar + Line) -----------
-var trafficOptions = {
-  series: [
-    {
-      name: 'Doctors',
-      type: 'column',
-      data: [400, 550, 480, 350, 680, 290, 380, 720, 450, 310, 230, 160]
-    },
-    {
-      name: 'Department',
-      type: 'line',
-      data: [45, 70, 50, 75, 42, 60, 54, 48]
-    }
-  ],
-  chart: {
-    height: 330,
-    type: 'line',
-    stacked: false
-  },
-  stroke: {
-    width: [0, 4]
-  },
-  plotOptions: {
-    bar: { columnWidth: "55%" }
-  },
-  colors: ["#2196F3", "#00E676"],
-  labels: [
-    "Rinku", "Raju", "Sohana", "Rezaul", "Shahinur", "Rinku", "Raju", "Sohana", "Rezaul", "Shahinur", "Rinku", "Raju", "Sohana", "Rezaul", "Shahinur"
-  ],
-  yaxis: [
-    {
-      title: { text: "Doctors Income" }
-    },
-    {
-      opposite: true,
-      title: { text: "Department Income" }
-    }
-  ],
-  legend: { position: 'bottom' }
-};
-new ApexCharts(document.querySelector("#traffic_sources_chart"), trafficOptions).render();
-
-
-// ------- INCOME DONUT / PROGRESS RING CHART ----------
-var incomePercentage = 75; // <-- You can replace with API percentage
-
-var incomeOptions = {
-  chart: {
-    type: "radialBar",
-    height: 330
-  },
-  series: [incomePercentage],
-  colors: ["#2196F3"],
-  plotOptions: {
-    radialBar: {
-      hollow: { size: "65%" },
-      dataLabels: {
-        name: { show: false },
-        value: {
-          fontSize: "32px",
-          show: true,
-          formatter: val => `${val}`
-        }
-      }
-    }
-  },
-  labels: ["Income"]
-};
-new ApexCharts(document.querySelector("#income_progress_chart"), incomeOptions).render();
-
