@@ -214,6 +214,36 @@ function fetchDataAndUpdate() {
       // 5) ApexCharts: trafficChart and incomeDonutChart from stats.doctor_total_income
       const docs = stats.doctor_total_income || [];
 
+      const tableBody = document.getElementById("doctorTableBody");
+      if (tableBody) tableBody.innerHTML = "";
+
+      // Insert doctor rows
+      docs.forEach((doc, index) => {
+          const row = document.createElement("tr");
+
+          row.innerHTML = `
+              <td>${index + 1}</td>
+              <td>${doc.doctor_id}</td>
+              <td>${doc.doctor_name}</td>
+              <td contenteditable="true" data-field="income" data-index="${index}">
+                  ${doc.income}
+              </td>
+              <td contenteditable="true" data-field="count" data-index="${index}">
+                  ${doc.count}
+              </td>
+          `;
+
+          tableBody.appendChild(row);
+      });
+
+      // Enable live editing
+      enableEditing(docs);
+
+
+
+      
+
+
       if (trafficChart) {
         if (docs.length) {
           const labels = docs.map(d => d.doctor_name);
@@ -298,6 +328,25 @@ function fetchDataAndUpdate() {
     });
 }
 
+function enableEditing(doctors) {
+    document.querySelectorAll("[contenteditable]").forEach(cell => {
+        cell.addEventListener("input", function () {
+            const index = this.getAttribute("data-index");
+            const field = this.getAttribute("data-field");
+            let value = this.innerText.trim();
+
+            if (field === "income" || field === "count") {
+                value = parseFloat(value) || 0;
+            }
+
+            doctors[index][field] = value;
+
+            // Live-update charts
+            // renderCharts(doctors);
+        });
+    });
+}
+
 // =====================
 //   INIT
 // =====================
@@ -315,3 +364,34 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 });
+
+document.addEventListener("DOMContentLoaded", () => {
+
+    const gradients = [
+        "linear-gradient(135deg, #ff7eb3, #ff758c)",
+        "linear-gradient(135deg, #6a11cb, #2575fc)",
+        "linear-gradient(135deg, #ff9966, #ff5e62)",
+        "linear-gradient(135deg, #00c6ff, #0072ff)",
+        "linear-gradient(135deg, #f7971e, #ffd200)",
+        "linear-gradient(135deg, #16a085, #f4d03f)",
+        "linear-gradient(135deg, #ff5f6d, #ffc371)",
+        "linear-gradient(135deg, #8360c3, #2ebf91)",
+        "linear-gradient(135deg, #4e54c8, #8f94fb)",
+        "linear-gradient(135deg, #11998e, #38ef7d)",
+        "linear-gradient(135deg, #ff6a00, #ee0979)",
+        "linear-gradient(135deg, #00b09b, #96c93d)",
+        "linear-gradient(135deg, #1e3c72, #2a5298)",
+        "linear-gradient(135deg, #d53369, #cbad6d)",
+        "linear-gradient(135deg, #ffafbd, #ffc3a0)",
+        "linear-gradient(135deg, #4568dc, #b06ab3)"
+    ];
+
+    const cards = document.querySelectorAll(".card.text-center");
+
+    cards.forEach((card, index) => {
+        card.style.background = gradients[index % gradients.length];
+    });
+});
+
+
+
