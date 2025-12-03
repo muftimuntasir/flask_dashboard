@@ -217,24 +217,30 @@ function fetchDataAndUpdate() {
       const tableBody = document.getElementById("doctorTableBody");
       if (tableBody) tableBody.innerHTML = "";
 
-      // Insert doctor rows
-      docs.forEach((doc, index) => {
-          const row = document.createElement("tr");
+      loadDoctorTable("eye", stats);
 
-          row.innerHTML = `
-              <td>${index + 1}</td>
-              <td>${doc.doctor_id}</td>
-              <td>${doc.doctor_name}</td>
-              <td contenteditable="true" data-field="income" data-index="${index}">
-                  ${doc.income}
-              </td>
-              <td contenteditable="true" data-field="count" data-index="${index}">
-                  ${doc.count}
-              </td>
-          `;
+      document.getElementById("departmentSelect").addEventListener("change", function () {
+    loadDoctorTable(this.value, stats);
+});
 
-          tableBody.appendChild(row);
-      });
+      // // Insert doctor rows
+      // docs.forEach((doc, index) => {
+      //     const row = document.createElement("tr");
+
+      //     row.innerHTML = `
+      //         <td>${index + 1}</td>
+      //         <td>${doc.doctor_id}</td>
+      //         <td>${doc.doctor_name}</td>
+      //         <td contenteditable="true" data-field="income" data-index="${index}">
+      //             ${doc.income}
+      //         </td>
+      //         <td contenteditable="true" data-field="count" data-index="${index}">
+      //             ${doc.count}
+      //         </td>
+      //     `;
+
+      //     tableBody.appendChild(row);
+      // });
 
       // Enable live editing
       enableEditing(docs);
@@ -393,5 +399,43 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 });
 
+function loadDoctorTable(department, stats) {
+
+    const tableBody = document.getElementById("doctorTableBody");
+    tableBody.innerHTML = "";
+
+    let docs = [];
+
+    // Mapping department → correct API key
+    switch (department) {
+        case "eye":
+            docs = stats.doctor_total_income || [];
+            break;
+        case "dental":
+            docs = stats.dental_doctor_income || [];
+            break;
+        case "physio":
+            docs = stats.physiotherapist_income || [];
+            break;
+    }
+
+    docs.forEach((doc, index) => {
+        const row = document.createElement("tr");
+
+        row.innerHTML = `
+            <td>${index + 1}</td>
+            <td>${doc.doctor_id}</td>
+            <td>${doc.doctor_name}</td>
+            <td contenteditable="true" data-field="income" data-index="${index}">
+                ${doc.income}
+            </td>
+            <td contenteditable="true" data-field="count" data-index="${index}">
+                ${doc.count}
+            </td>
+        `;
+
+        tableBody.appendChild(row);
+    });
+}
 
 
