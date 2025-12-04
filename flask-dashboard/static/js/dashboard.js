@@ -30,7 +30,47 @@ function updateFinancialStats(stats) {
 
   if (get("physio_opd_stat"))
     get("physio_opd_stat").textContent =
-      `${stats.physiotherpay_opd?.amount ?? 0} / ${stats.physiotherpay_opd?.count ?? 0}`;
+      `${stats.physiotherapy_opd?.amount ?? 0} / ${stats.physiotherapy_opd?.count ?? 0}`;
+
+   if (get("optics_sale_stat"))
+    get("optics_sale_stat").textContent =
+      `${stats.optics_income?.amount ?? 0} / ${stats.optics_income?.count ?? 0}`;
+
+  if (get("noofsurgery_stat"))
+    get("noofsurgery_stat").textContent =
+      `${stats.surgery?.count ?? 0}`;
+
+  if (get("admission_income_stat"))
+    get("admission_income_stat").textContent =
+      `${stats.admission?.amount ?? 0} / ${stats.admission?.count ?? 0}`;
+
+  if (get("investigation_income_stat"))
+    get("investigation_income_stat").textContent =
+      `${stats.investigation_income?.amount ?? 0} / ${stats.investigation_income?.count ?? 0}`;
+
+  if (get("pos_income_stat"))
+    get("pos_income_stat").textContent =
+      `${stats.pos_income?.subtotal ?? 0} / ${stats.pos_income?.count ?? 0}`;
+
+  if (get("cash_abo_stat"))
+    get("cash_abo_stat").textContent =
+      `${stats.money_receipt?.amount ?? 0}`;
+
+  if (get("discount_stat"))
+    get("discount_stat").textContent =
+    `${stats.discount?.total_discount ?? 0} / ${stats.discount?.count ?? 0}`;
+
+  
+  const total_cash=
+    (stats.opd_income?.amount ?? 0)+
+    (stats.pos_income?.subtotal ?? 0)+
+    (stats.money_receipt?.amount ?? 0);
+
+  
+  if (get("total_cash_stat"))
+    get("total_cash_stat").textContent = total_cash;
+
+    
 }
 
 function renderEmptyCharts() {

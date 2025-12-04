@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from dateutil import parser
 import random
 import xmlrpc.client
+import requests
 
 
 app = Flask(__name__)
@@ -34,9 +35,46 @@ def index():
     return render_template('dashboard.html')
 
 
+def get_odoo_dashboard_data_via_http(params):
+    url = "http://192.168.2.15:8069/dashboard/data"  # your route
+    headers = {
+        'Content-Type': 'application/json',
+    }
+
+    # If you have Odoo session (user login), you may need cookies
+    # For demo, assuming public auth or user session already exists
+
+    if params and len(params) == 2:
+            start_date = params[0].split("T")[0]   # '2025-11-17'
+            end_date = params[1].split("T")[0]
+    
+    else:
+            start_date=datetime.today()
+            end_date=datetime.today()
+
+    print("preparing data for execute")
+    payload = {
+        "start_date": start_date,
+        "end_date": end_date
+    }
+
+    try:
+        response = requests.post(url, data=payload)
+        response.raise_for_status()
+        data = response.json()
+        print("Odoo dashboard data:", data)
+        return data
+    except Exception as e:
+        print("Error fetching dashboard data:", e)
+        return None
+
+# # Example call:
+# get_odoo_dashboard_data_via_http("2025-12-01", "2025-12-04")
+
+
 def get_odoo_dashboard_data(params):
-    url = "http://192.168.3.94:8069"
-    dbname = "181125_leih"
+    url = "http://192.168.2.15:8069"
+    dbname = "LEIH"
     username = "api"
     password = "api@mk"
 
@@ -61,6 +99,8 @@ def get_odoo_dashboard_data(params):
             start_date = params[0].split("T")[0]   # '2025-11-17'
             end_date = params[1].split("T")[0]
 
+            print("preparing data for execute")
+
             result = models.execute_kw(
                 dbname, uid, password,
                 "dashboard.dashboard",
@@ -71,6 +111,7 @@ def get_odoo_dashboard_data(params):
                 "end_date": end_date
                 }
             )
+            print("takes parameter")
         else:
             result = models.execute_kw(
                 dbname,
@@ -101,7 +142,8 @@ def api_data():
     else:
         params = []
 
-    odoo_data = get_odoo_dashboard_data(params)
+    # odoo_data = get_odoo_dashboard_data(params)
+    odoo_data = get_odoo_dashboard_data_via_http(params)
     # import pdb;pdb.set_trace()
     # odoo_data = get_odoo_dashboard_data()
 
