@@ -5,6 +5,14 @@ from dateutil import parser
 import random
 import xmlrpc.client
 import requests
+import os
+from flask import send_from_directory
+import psycopg2
+from psycopg2 import pool
+
+
+
+
 
 
 app = Flask(__name__)
@@ -35,14 +43,24 @@ def index():
     return render_template('dashboard.html')
 
 
+@app.route('/favicon.ico')
+def favicon():
+    return send_from_directory(
+        os.path.join(app.root_path, 'static'),
+        'favicon.ico', mimetype='image/vnd.microsoft.icon'
+    )
+
+
+
 def get_odoo_dashboard_data_via_http(params):
-    url = "http://192.168.2.15:8069/dashboard/data"  # your route
+    url = "http://192.168.3.9:8069/dashboard/data"  # your route
     headers = {
         'Content-Type': 'application/json',
     }
 
     # If you have Odoo session (user login), you may need cookies
-    # For demo, assuming public auth or user session already exists
+    # For demo, assuming public auth or user sess
+    # ion already exists
 
     if params and len(params) == 2:
             start_date = params[0].split("T")[0]   # '2025-11-17'
@@ -70,6 +88,507 @@ def get_odoo_dashboard_data_via_http(params):
 
 # # Example call:
 # get_odoo_dashboard_data_via_http("2025-12-01", "2025-12-04")
+
+# for try some thing
+# -----------------------------
+# 1. Setup Connection Pool (reuse connections)
+# -----------------------------
+pg_pool = pool.SimpleConnectionPool(
+    1, 20,  # min 1, max 20 connections
+    dbname="LEIH",
+    user="dashboard",
+    password="dashboard",
+    host="192.168.2.15",
+    port=5432
+)
+
+def get_conn():
+    return pg_pool.getconn()
+
+def release_conn(conn):
+    pg_pool.putconn(conn)
+
+
+
+
+# -----------------------------
+# 2. Optimized Dashboard Query
+# -----------------------------
+def get_dashboard_data_db(params):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    try:
+        # -----------------------------
+        # Prepare date ranges
+        # -----------------------------
+        if params and len(params) == 2:
+            start_date = params[0].split("T")[0] + " 00:00:00"
+            end_date = params[1].split("T")[0] + " 23:59:59"
+        else:
+            today = datetime.today().strftime("%Y-%m-%d")
+            start_date = today + " 00:00:00"
+            end_date = today + " 23:59:59"
+
+        # -----------------------------
+        # 3. Merge OPD/Dental/Physio queries
+        # -----------------------------
+        cur.execute("""
+        SELECT
+            COUNT(ot.id) FILTER (WHERE ot.state='confirmed') AS opd_count,
+            SUM(otl.total_amount) FILTER (WHERE ot.state='confirmed') AS opd_amount,
+
+            COUNT(ot.id) FILTER (WHERE ot.state='confirmed' AND otl.department ILIKE 'dental') AS dental_count,
+            SUM(otl.total_amount) FILTER (WHERE ot.state='confirmed' AND otl.department ILIKE 'dental') AS dental_amount,
+
+            COUNT(ot.id) FILTER (WHERE ot.state='confirmed' AND otl.department ILIKE '%%physiotherapy%%') AS physio_count,
+            SUM(otl.total_amount) FILTER (WHERE ot.state='confirmed' AND otl.department ILIKE '%%physiotherapy%%') AS physio_amount
+        FROM opd_ticket ot
+        JOIN opd_ticket_line otl ON otl.opd_ticket_id = ot.id
+        WHERE ot.create_date BETWEEN %s AND %s
+        """, (start_date, end_date))
+
+        opd_count, opd_amount, dental_count, dental_amount, physio_count, physio_amount = cur.fetchone()
+
+        result = {
+            'opd_income': {'count': opd_count or 0, 'amount': opd_amount or 0},
+            'dental_opd': {'count': dental_count or 0, 'amount': dental_amount or 0},
+            'physiotherapy_opd': {'count': physio_count or 0, 'amount': physio_amount or 0},
+        }
+
+        # -----------------------------
+        # 4. Merge Dental/Physio Bills
+        # -----------------------------
+        cur.execute("""
+        SELECT
+            COUNT(DISTINCT br.id) FILTER (WHERE brl.department ILIKE 'dental') AS dental_bill_count,
+            SUM(br.grand_total) FILTER (WHERE brl.department ILIKE 'dental') AS dental_bill_total,
+            SUM(mr.amount) FILTER (WHERE brl.department ILIKE 'dental') AS dental_paid,
+
+            COUNT(DISTINCT br.id) FILTER (WHERE brl.department ILIKE 'Physiotherapy') AS physio_bill_count,
+            SUM(br.grand_total) FILTER (WHERE brl.department ILIKE 'Physiotherapy') AS physio_bill_total,
+            SUM(mr.amount) FILTER (WHERE brl.department ILIKE 'Physiotherapy') AS physio_paid
+        FROM bill_register br
+        JOIN bill_register_line brl ON brl.bill_register_id = br.id
+        LEFT JOIN leih_money_receipt mr ON mr.bill_id = br.id AND mr.state='confirm'
+        WHERE br.state='confirmed'
+        AND br.create_date BETWEEN %s AND %s
+        """, (start_date, end_date))
+
+        d_count, d_total, d_paid, p_count, p_total, p_paid = cur.fetchone()
+
+        result['dental_income'] = {'count': d_count or 0, 'amount': d_total or 0, 'paid': d_paid or 0}
+        result['physiotherapy_bill'] = {'count': p_count or 0, 'amount': p_total or 0, 'paid': p_paid or 0}
+
+        # -----------------------------
+        # 5. Admission & Surgery
+        # -----------------------------
+        cur.execute("""
+        SELECT
+        COUNT(*) AS admission_count,
+        SUM(grand_total) AS total,
+        COUNT(operation_date) AS surgery_count
+        FROM leih_admission
+        WHERE state='activated'
+        AND date BETWEEN %s AND %s
+        """, (start_date, end_date))
+        adm_count, adm_total, surgery_count = cur.fetchone()
+
+# Admission paid amount (separate & indexed)
+        cur.execute("""
+        SELECT SUM(amount)
+        FROM leih_money_receipt
+        WHERE state='confirm'
+        AND admission_id IN (
+        SELECT id FROM leih_admission
+        WHERE state='activated'
+        AND date BETWEEN %s AND %s
+        )
+        """, (start_date, end_date))
+
+        adm_paid = cur.fetchone()[0]
+
+        result['admission'] = {
+        'count': adm_count or 0,
+        'amount': adm_total or 0,
+        'paid': adm_paid or 0,
+        }
+        result['surgery'] = {
+        'count': surgery_count or 0
+        }
+
+
+# -----------------------------
+# 2. Optics
+# -----------------------------
+        cur.execute("""
+            SELECT
+                COUNT(*) AS count,
+                SUM(total) AS total,
+                SUM(mr.amount) AS paid
+            FROM optics_sale os
+            LEFT JOIN leih_money_receipt mr
+                ON mr.optics_sale_id = os.id AND mr.state='confirm'
+            WHERE os.date BETWEEN %s AND %s
+        """, (start_date, end_date))
+
+        opt_count, opt_total, opt_paid = cur.fetchone()
+
+        result['optics_income'] = {
+            'count': opt_count or 0,
+            'amount': opt_total or 0,
+            'paid': opt_paid or 0
+        }
+
+
+        # -----------------------------
+        # 3. Investigation Income
+        # -----------------------------
+        cur.execute("""
+            SELECT
+                COUNT(*) AS count,
+                SUM(br.grand_total) AS total,
+                SUM(mr.amount) AS paid
+            FROM bill_register br
+            LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
+            LEFT JOIN leih_money_receipt mr
+                ON mr.bill_id = br.id AND mr.state='confirm'
+            WHERE br.create_date BETWEEN %s AND %s
+            AND brl.department NOT ILIKE 'dental'
+            AND brl.department NOT ILIKE 'physiot'
+        """, (start_date, end_date))
+
+        inv_count, inv_total, inv_paid = cur.fetchone()
+
+        result['investigation_income'] = {
+            'count': inv_count or 0,
+            'amount': inv_total or 0,
+            'paid': inv_paid or 0
+        }
+
+
+        # -----------------------------
+        # 4. POS Income
+        # -----------------------------
+        cur.execute("""
+            SELECT
+                COUNT(*) AS count,
+                SUM(pol.price_subtotal) AS subtotal
+            FROM pos_order po
+            LEFT JOIN pos_order_line pol ON pol.order_id = po.id
+            WHERE po.date_order BETWEEN %s AND %s
+        """, (start_date, end_date))
+
+        pos_count, pos_subtotal = cur.fetchone()
+
+        result['pos_income'] = {
+            'count': pos_count or 0,
+            'subtotal': pos_subtotal or 0
+        }
+
+
+        # -----------------------------
+        # 5. Money Receipt (All Cash Collection)
+        # -----------------------------
+        cur.execute("""
+            SELECT COUNT(*), SUM(amount)
+            FROM leih_money_receipt
+            WHERE create_date BETWEEN %s AND %s
+            AND state='confirm'
+        """, (start_date, end_date))
+
+        cash_count, cash_total = cur.fetchone()
+
+        result['money_receipt'] = {
+            'count': cash_count or 0,
+            'amount': cash_total or 0
+        }
+
+
+        # -----------------------------
+        # 6. Discount
+        # -----------------------------
+        cur.execute("""
+            SELECT COUNT(*), SUM(total_discount)
+            FROM discount
+            WHERE date BETWEEN %s AND %s
+            AND state='approve'
+        """, (start_date, end_date))
+
+        disc_count, disc_total = cur.fetchone()
+
+        result['discount'] = {
+            'count': disc_count or 0,
+            'total_discount': disc_total or 0
+        }
+
+
+    # for doctor income
+
+        cur.execute("""
+            SELECT
+            dp.id AS doctor_id,
+            dp.name AS doctor_name,
+            SUM(total_income),
+            SUM(total_count)
+            FROM (
+            SELECT
+                la.ref_doctors AS doctor_id,
+                SUM(la.grand_total) AS total_income,
+                COUNT(*) AS total_count
+            FROM leih_admission la
+            WHERE la.state='activated'
+            AND la.date BETWEEN %s AND %s
+            GROUP BY la.ref_doctors
+
+            UNION ALL
+
+            SELECT
+                br.ref_doctors AS doctor_id,
+                SUM(br.grand_total) AS total_income,
+                COUNT(*) AS total_count
+            FROM bill_register br
+            JOIN bill_register_line brl ON brl.bill_register_id = br.id
+            JOIN examination_entry ee ON ee.id = brl.name
+            JOIN diagnosis_department dd ON dd.id = ee.department
+            WHERE br.state='confirmed'
+            AND br.ref_doctors IS NOT NULL
+            AND br.create_date BETWEEN %s AND %s
+            AND dd.name ILIKE ANY (ARRAY[
+                'Retinal Procedure',
+                'minor-ot',
+                'retinal surgery',
+                'other surgery'
+            ])
+            GROUP BY br.ref_doctors
+        ) AS combined
+        JOIN doctors_profile dp ON dp.id = combined.doctor_id
+        GROUP BY dp.id, dp.name
+        ORDER BY SUM(total_income) DESC
+        """, (start_date, end_date, start_date, end_date))
+
+        rows = cur.fetchall()
+
+        result['doctor_total_income'] = [
+    {
+        'doctor_id': r[0],
+        'doctor_name': r[1],
+        'income': r[2] or 0,
+        'count': r[3] or 0,
+    }
+    for r in rows
+    ]
+# end doctor income
+
+
+        return result
+
+    except Exception as e:
+        print("Error fetching dashboard:", e)
+        return {}
+    finally:
+        cur.close()
+        release_conn(conn)
+
+
+
+
+# for general
+
+# pool for general
+
+
+# # end pool for general
+
+def get_general_dashboard_data_db(params):
+
+    pg_pool = pool.SimpleConnectionPool(
+    1, 20,  # min 1, max 20 connections
+    dbname="GM",
+    user="dashboard",
+    password="dashboard",
+    host="192.168.2.89",
+    port=5432
+)
+
+    def get_conn():
+        return pg_pool.getconn()
+
+    def release_conn(conn):
+        pg_pool.putconn(conn)
+        conng = get_conn()
+        cur = conn.cursor()
+    conn = get_conn()
+    cur = conn.cursor()
+    result = {}
+
+    try:
+        # -----------------------------
+        # Prepare date ranges
+        # -----------------------------
+        if params and len(params) == 2:
+            start_date = params[0].split("T")[0] + " 00:00:00"
+            end_date = params[1].split("T")[0] + " 23:59:59"
+        else:
+            today = datetime.today().strftime("%Y-%m-%d")
+            start_date = today + " 00:00:00"
+            end_date = today + " 23:59:59"
+
+        cur.execute("""
+        SELECT
+        COUNT(DISTINCT br.id) AS count,
+        SUM(br.grand_total) AS total,
+        SUM(mr.amount) AS paid
+        FROM bill_register br
+        LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
+        LEFT JOIN legh_money_receipt mr
+        ON mr.bill_id = br.id AND mr.state='confirm'
+        WHERE br.create_date BETWEEN %s AND %s
+        AND brl.department ILIKE 'MRI'
+        """, (start_date, end_date))
+
+        inv_count, inv_total, inv_paid = cur.fetchone()
+
+        result['MRI_income'] = {
+            'count': inv_count or 0,
+            'amount': inv_total or 0,
+            'paid': inv_paid or 0,
+        }
+     
+
+
+        cur.execute("""
+        SELECT
+        COUNT(DISTINCT br.id) AS count,
+        SUM(br.grand_total) AS total,
+        SUM(mr.amount) AS paid
+        FROM bill_register br
+        LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
+        LEFT JOIN legh_money_receipt mr
+        ON mr.bill_id = br.id AND mr.state='confirm'
+        WHERE br.create_date BETWEEN %s AND %s
+        AND brl.department ILIKE 'CT Scan'
+        """, (start_date, end_date))
+
+        inv_count, inv_total, inv_paid = cur.fetchone()
+
+        result['ct_scan_income'] = {
+            'count': inv_count or 0,
+            'amount': inv_total or 0,
+            'paid': inv_paid or 0,
+        }
+# X-ray income
+        cur.execute("""
+        SELECT
+        COUNT(DISTINCT br.id) AS count,
+        SUM(br.grand_total) AS total,
+        SUM(mr.amount) AS paid
+        FROM bill_register br
+        LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
+        LEFT JOIN legh_money_receipt mr
+        ON mr.bill_id = br.id AND mr.state='confirm'
+        WHERE br.create_date BETWEEN %s AND %s
+        AND brl.department ILIKE 'X-ray'
+        """, (start_date, end_date))
+
+        inv_count, inv_total, inv_paid = cur.fetchone()
+
+        result['x_ray_income'] = {
+            'count': inv_count or 0,
+            'amount': inv_total or 0,
+            'paid': inv_paid or 0,
+        }
+
+        cur.execute("""
+        SELECT
+        COUNT(DISTINCT br.id) AS count,
+        SUM(br.grand_total) AS total,
+        SUM(mr.amount) AS paid
+        FROM bill_register br
+        LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
+        LEFT JOIN legh_money_receipt mr
+        ON mr.bill_id = br.id AND mr.state='confirm'
+        WHERE br.create_date BETWEEN %s AND %s
+        AND brl.department NOT ILIKE 'MRI'
+        AND brl.department NOT ILIKE 'CT Scan'
+        AND brl.department NOT ILIKE 'X-ray'
+        """, (start_date, end_date))
+
+        inv_count, inv_total, inv_paid = cur.fetchone()
+
+        result['pathology_income'] = {
+            'count': inv_count or 0,
+            'amount': inv_total or 0,
+            'paid': inv_paid or 0,
+        }
+
+        # indoor patient
+        cur.execute("""
+        SELECT
+        COUNT(DISTINCT adm.id) AS indoor_patient_count,
+        SUM(mr.amount) AS total_paid
+        FROM hospital_admission adm
+        LEFT JOIN legh_money_receipt mr
+        ON mr.general_admission_id = adm.id
+        AND mr.state = 'confirm'
+        AND mr.create_date BETWEEN %s AND %s
+        WHERE adm.state = 'activated'
+        """, (start_date, end_date))
+
+        indoor_count, total_paid = cur.fetchone()
+
+        result['indoor_patient'] = {
+        'count': indoor_count or 0,
+        'paid': total_paid or 0
+        }  
+
+                # -----------------------------
+        # 5. Money Receipt (All Cash Collection)
+        # -----------------------------
+        cur.execute("""
+            SELECT COUNT(*), SUM(amount)
+            FROM legh_money_receipt
+            WHERE create_date BETWEEN %s AND %s
+            AND state='confirm'
+        """, (start_date, end_date))
+
+        cash_count, cash_total = cur.fetchone()
+
+        result['legh_money_receipt'] = {
+            'count': cash_count or 0,
+            'amount': cash_total or 0
+        }
+
+        # -----------------------------
+        # 4. POS Income
+        # -----------------------------
+        cur.execute("""
+            SELECT
+                COUNT(*) AS count,
+                SUM(pol.price_subtotal) AS subtotal
+            FROM pos_order po
+            LEFT JOIN pos_order_line pol ON pol.order_id = po.id
+            WHERE po.date_order BETWEEN %s AND %s
+        """, (start_date, end_date))
+
+        pos_count, pos_subtotal = cur.fetchone()
+
+        result['pos_income'] = {
+            'count': pos_count or 0,
+            'subtotal': pos_subtotal or 0
+        }
+
+        return result
+        
+
+    except Exception as e:
+        print("Error fetching dashboard:", e)
+        return {}
+    finally:
+        cur.close()
+        release_conn(conn)
+# end of general
+
 
 
 def get_odoo_dashboard_data(params):
@@ -123,6 +642,7 @@ def get_odoo_dashboard_data(params):
             )
 
         print("Odoo returned:", result)
+
         return result
 
     except Exception as e:
@@ -142,8 +662,14 @@ def api_data():
     else:
         params = []
 
+    final_data = {}
     # odoo_data = get_odoo_dashboard_data(params)
-    odoo_data = get_odoo_dashboard_data_via_http(params)
+    # odoo_data = get_odoo_dashboard_data_via_http(params)
+    eye_data = get_dashboard_data_db(params)
+    general_data = get_general_dashboard_data_db(params)
+    final_data.update(eye_data)
+    final_data.update(general_data)
+    
     # import pdb;pdb.set_trace()
     # odoo_data = get_odoo_dashboard_data()
 
@@ -185,7 +711,7 @@ def api_data():
     #     "top_labels": []
     # }
 
-    return jsonify({"stats":odoo_data})
+    return jsonify({"stats":final_data})
 
 # --- Utility: create DB + seed (if empty) ---
 def seed_db():

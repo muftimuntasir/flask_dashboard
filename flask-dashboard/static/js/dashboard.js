@@ -60,11 +60,47 @@ function updateFinancialStats(stats) {
     get("discount_stat").textContent =
     `${stats.discount?.total_discount ?? 0} / ${stats.discount?.count ?? 0}`;
 
+    // income of general
+
+  
+  if (get("pathology_income_stat"))
+    get("pathology_income_stat").textContent =
+    `${stats.pathology_income?.amount ?? 0} / ${stats.pathology_income?.count ?? 0}`;
+
+
+  if (get("mri_income_stat"))
+    get("mri_income_stat").textContent =
+    `${stats.MRI_income?.amount ?? 0} / ${stats.MRI_income?.count ?? 0}`;
+
+
+  if (get("ct_income_stat"))
+    get("ct_income_stat").textContent =
+    `${stats.ct_scan_income?.amount ?? 0} / ${stats.ct_scan_income?.count ?? 0}`;
+
+
+  if (get("xray_income_stat"))
+    get("xray_income_stat").textContent =
+    `${stats.x_ray_income?.amount ?? 0} / ${stats.x_ray_income?.count ?? 0}`;
+
+
+  if (get("indoor_income_stat"))
+    get("indoor_income_stat").textContent =
+    `${stats.indoor_patient?.paid ?? 0} / ${stats.indoor_patient?.count ?? 0}`;
+
+  if (get("pharmacy_income_stat"))
+    get("pharmacy_income_stat").textContent =
+    `${stats.pos_income?.subtotal ?? 0} / ${stats.pos_income?.count ?? 0}`;
+
+  if (get("cash_income_stat"))
+    get("cash_income_stat").textContent =
+    `${stats.legh_money_receipt?.amount ?? 0} / ${stats.legh_money_receipt?.count ?? 0}`;
+
   
   const total_cash=
-    (stats.opd_income?.amount ?? 0)+
-    (stats.pos_income?.subtotal ?? 0)+
-    (stats.money_receipt?.amount ?? 0);
+    Number(stats.opd_income?.amount ?? 0) +
+    Number(stats.pos_income?.subtotal ?? 0) +
+    Number(stats.money_receipt?.amount ?? 0);
+
 
   
   if (get("total_cash_stat"))
