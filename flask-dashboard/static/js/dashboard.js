@@ -82,14 +82,22 @@ function updateFinancialStats(stats) {
     get("xray_income_stat").textContent =
     `${stats.x_ray_income?.amount ?? 0} / ${stats.x_ray_income?.count ?? 0}`;
 
+  if (get("usg_echo_income_stat"))
+    get("usg_echo_income_stat").textContent =
+    `${stats.usg_echo_income?.amount ?? 0} / ${stats.usg_echo_income?.count ?? 0}`;
+
+  if (get("ecg_income_stat"))
+    get("ecg_income_stat").textContent =
+    `${stats.ecg_income?.amount ?? 0} / ${stats.ecg_income?.count ?? 0}`;
+
 
   if (get("indoor_income_stat"))
     get("indoor_income_stat").textContent =
-    `${stats.indoor_patient?.paid ?? 0} / ${stats.indoor_patient?.count ?? 0}`;
+    `${stats.indoor_patient?.count ?? 0} / ${stats.indoor_patient?.paid ?? 0}`;
 
   if (get("pharmacy_income_stat"))
     get("pharmacy_income_stat").textContent =
-    `${stats.pos_income?.subtotal ?? 0} / ${stats.pos_income?.count ?? 0}`;
+    `${stats.general_pos_income?.subtotal ?? 0} / ${stats.general_pos_income?.count ?? 0}`;
 
   if (get("cash_income_stat"))
     get("cash_income_stat").textContent =
@@ -105,6 +113,15 @@ function updateFinancialStats(stats) {
   
   if (get("total_cash_stat"))
     get("total_cash_stat").textContent = total_cash;
+
+
+
+  const total_general_cash=
+    Number(stats.general_pos_income?.subtotal ?? 0) +
+    Number(stats.legh_money_receipt?.amount ?? 0);
+  
+  if (get("total_general_cash_stat"))
+    get("total_general_cash_stat").textContent = total_general_cash;
 
     
 }

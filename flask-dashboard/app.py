@@ -190,7 +190,7 @@ def get_dashboard_data_db(params):
         COUNT(operation_date) AS surgery_count
         FROM leih_admission
         WHERE state='activated'
-        AND date BETWEEN %s AND %s
+        AND operation_date BETWEEN %s AND %s
         """, (start_date, end_date))
         adm_count, adm_total, surgery_count = cur.fetchone()
 
@@ -380,6 +380,88 @@ def get_dashboard_data_db(params):
     ]
 # end doctor income
 
+#dental income
+
+        dental_pattern = '%dental%'
+
+        cur.execute("""
+            SELECT
+                COALESCE(dp.id, 0) AS doctor_id,
+                COALESCE(dp.name, 'Undefined') AS doctor_name,
+                SUM(br.grand_total) AS income,
+                COUNT(DISTINCT br.id) AS bill_count
+            FROM bill_register br
+            JOIN bill_register_line brl
+                ON brl.bill_register_id = br.id
+            JOIN examination_entry ee
+                ON ee.id = brl.name
+            JOIN diagnosis_department dd
+                ON dd.id = ee.department
+            LEFT JOIN doctors_profile dp
+                ON dp.id = br.ref_doctors
+
+            WHERE br.state = 'confirmed'
+            AND br.create_date >= %s
+            AND br.create_date <= %s
+            AND dd.name ILIKE %s
+
+            GROUP BY dp.id, dp.name
+            ORDER BY income DESC
+            """, (start_date, end_date, dental_pattern))
+
+        rows = cur.fetchall()
+
+        result['dental_doctor_income'] = [
+            {
+                'doctor_id': r[0],
+                'doctor_name': r[1],
+                'income': r[2] or 0,
+                'count': r[3] or 0,
+            }
+            for r in rows
+        ]
+
+    #for physiotherapist Income
+
+        physio_pattern = '%physioth%'
+
+        cur.execute("""
+            SELECT
+                COALESCE(dp.id, 0) AS doctor_id,
+                COALESCE(dp.name, 'Undefined') AS doctor_name,
+                SUM(br.grand_total) AS income,
+                COUNT(DISTINCT br.id) AS bill_count
+            FROM bill_register br
+            JOIN bill_register_line brl
+                ON brl.bill_register_id = br.id
+            JOIN examination_entry ee
+                ON ee.id = brl.name
+            JOIN diagnosis_department dd
+                ON dd.id = ee.department
+            LEFT JOIN doctors_profile dp
+                ON dp.id = br.ref_doctors
+
+            WHERE br.state = 'confirmed'
+            AND br.create_date >= %s
+            AND br.create_date <= %s
+            AND dd.name ILIKE %s
+
+            GROUP BY dp.id, dp.name
+            ORDER BY income DESC
+        """, (start_date, end_date, physio_pattern))
+
+        rows = cur.fetchall()
+
+        result['physiotherapist_income'] = [
+            {
+                'doctor_id': r[0],
+                'doctor_name': r[1],
+                'income': r[2] or 0,
+                'count': r[3] or 0,
+            }
+            for r in rows
+        ]
+
 
         return result
 
@@ -434,113 +516,87 @@ def get_general_dashboard_data_db(params):
             start_date = today + " 00:00:00"
             end_date = today + " 23:59:59"
 
-        cur.execute("""
-        SELECT
-        COUNT(DISTINCT br.id) AS count,
-        SUM(br.grand_total) AS total,
-        SUM(mr.amount) AS paid
-        FROM bill_register br
-        LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
-        LEFT JOIN legh_money_receipt mr
-        ON mr.bill_id = br.id AND mr.state='confirm'
-        WHERE br.create_date BETWEEN %s AND %s
-        AND brl.department ILIKE 'MRI'
-        """, (start_date, end_date))
-
-        inv_count, inv_total, inv_paid = cur.fetchone()
-
-        result['MRI_income'] = {
-            'count': inv_count or 0,
-            'amount': inv_total or 0,
-            'paid': inv_paid or 0,
-        }
-     
-
 
         cur.execute("""
         SELECT
-        COUNT(DISTINCT br.id) AS count,
-        SUM(br.grand_total) AS total,
-        SUM(mr.amount) AS paid
-        FROM bill_register br
-        LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
+        brl.department,
+        COUNT(*) AS line_count,
+        SUM(brl.total_amount) AS total_amount,
+        SUM(mr.amount) AS paid_amount
+        FROM bill_register_line brl
+        JOIN bill_register br ON br.id = brl.bill_register_id
         LEFT JOIN legh_money_receipt mr
-        ON mr.bill_id = br.id AND mr.state='confirm'
+        ON mr.bill_id = br.id AND mr.state = 'confirm'
         WHERE br.create_date BETWEEN %s AND %s
-        AND brl.department ILIKE 'CT Scan'
+        GROUP BY brl.department
         """, (start_date, end_date))
 
-        inv_count, inv_total, inv_paid = cur.fetchone()
+        rows = cur.fetchall()
 
-        result['ct_scan_income'] = {
-            'count': inv_count or 0,
-            'amount': inv_total or 0,
-            'paid': inv_paid or 0,
-        }
-# X-ray income
-        cur.execute("""
-        SELECT
-        COUNT(DISTINCT br.id) AS count,
-        SUM(br.grand_total) AS total,
-        SUM(mr.amount) AS paid
-        FROM bill_register br
-        LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
-        LEFT JOIN legh_money_receipt mr
-        ON mr.bill_id = br.id AND mr.state='confirm'
-        WHERE br.create_date BETWEEN %s AND %s
-        AND brl.department ILIKE 'X-ray'
-        """, (start_date, end_date))
-
-        inv_count, inv_total, inv_paid = cur.fetchone()
-
-        result['x_ray_income'] = {
-            'count': inv_count or 0,
-            'amount': inv_total or 0,
-            'paid': inv_paid or 0,
+        # Initialize response
+        result = {
+        'MRI_income': {'count': 0, 'amount': 0, 'paid': 0},
+        'ct_scan_income': {'count': 0, 'amount': 0, 'paid': 0},
+        'x_ray_income': {'count': 0, 'amount': 0, 'paid': 0},
+        'usg_echo_income': {'count': 0, 'amount': 0, 'paid': 0},
+        'ecg_income': {'count': 0, 'amount': 0, 'paid': 0},
+        'pathology_income': {'count': 0, 'amount': 0, 'paid': 0},
         }
 
-        cur.execute("""
-        SELECT
-        COUNT(DISTINCT br.id) AS count,
-        SUM(br.grand_total) AS total,
-        SUM(mr.amount) AS paid
-        FROM bill_register br
-        LEFT JOIN bill_register_line brl ON brl.bill_register_id = br.id
-        LEFT JOIN legh_money_receipt mr
-        ON mr.bill_id = br.id AND mr.state='confirm'
-        WHERE br.create_date BETWEEN %s AND %s
-        AND brl.department NOT ILIKE 'MRI'
-        AND brl.department NOT ILIKE 'CT Scan'
-        AND brl.department NOT ILIKE 'X-ray'
-        """, (start_date, end_date))
+# Process SQL rows
+        for dept, count, amount, paid in rows:
+            d = dept.lower()
 
-        inv_count, inv_total, inv_paid = cur.fetchone()
+            # Classification
+            if "mri" in d:
+                key = "MRI_income"
+            elif "ct" in d and "scan" in d:
+                key = "ct_scan_income"
+            elif "radiol" in d or "x-ray" in d or "xray" in d:
+                key = "x_ray_income"
+            elif "usg" in d or "echo" in d or "echocardiogram" in d:
+                key = "usg_echo_income"
+            elif d.strip() == "ecg":
+                key = "ecg_income"
+            else:
+                key = "pathology_income"
 
-        result['pathology_income'] = {
-            'count': inv_count or 0,
-            'amount': inv_total or 0,
-            'paid': inv_paid or 0,
-        }
+            # Add values (sum, not replace)
+            result[key]['count'] += count or 0
+            result[key]['amount'] += amount or 0
+            result[key]['paid'] += paid or 0
+
 
         # indoor patient
-        cur.execute("""
-        SELECT
-        COUNT(DISTINCT adm.id) AS indoor_patient_count,
-        SUM(mr.amount) AS total_paid
-        FROM hospital_admission adm
-        LEFT JOIN legh_money_receipt mr
-        ON mr.general_admission_id = adm.id
-        AND mr.state = 'confirm'
-        AND mr.create_date BETWEEN %s AND %s
-        WHERE adm.state = 'activated'
-        """, (start_date, end_date))
+            cur.execute("""
+            SELECT
+            (SELECT COUNT(*)
+            FROM hospital_admission
+            WHERE state = 'activated'
+            AND (emergency IS NOT TRUE)) AS admission_count,
 
-        indoor_count, total_paid = cur.fetchone()
+            (SELECT COALESCE(SUM(amount), 0)
+            FROM legh_money_receipt
+            WHERE state = 'confirm'
+            AND general_admission_id IS NOT NULL
+            AND general_admission_id IN (
+                SELECT id FROM hospital_admission
+                WHERE state = 'activated'
+                  AND (emergency IS NOT TRUE)
+            )
+            AND create_date BETWEEN %s AND %s
+            ) AS total_paid
+            """, (start_date, end_date))
 
-        result['indoor_patient'] = {
-        'count': indoor_count or 0,
-        'paid': total_paid or 0
-        }  
+            indoor_count, total_paid = cur.fetchone()
+
+            result['indoor_patient'] = {
+                'count': indoor_count or 0,
+                'paid': total_paid or 0
+            }
+
+
+
 
                 # -----------------------------
         # 5. Money Receipt (All Cash Collection)
@@ -573,7 +629,7 @@ def get_general_dashboard_data_db(params):
 
         pos_count, pos_subtotal = cur.fetchone()
 
-        result['pos_income'] = {
+        result['general_pos_income'] = {
             'count': pos_count or 0,
             'subtotal': pos_subtotal or 0
         }
