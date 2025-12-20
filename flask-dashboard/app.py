@@ -161,24 +161,48 @@ def get_dashboard_data_db(params):
         # -----------------------------
         cur.execute("""
         SELECT
-            COUNT(DISTINCT br.id) FILTER (WHERE brl.department ILIKE 'dental') AS dental_bill_count,
-            SUM(br.grand_total) FILTER (WHERE brl.department ILIKE 'dental') AS dental_bill_total,
-            SUM(mr.amount) FILTER (WHERE brl.department ILIKE 'dental') AS dental_paid,
-
-            COUNT(DISTINCT br.id) FILTER (WHERE brl.department ILIKE 'Physiotherapy') AS physio_bill_count,
-            SUM(br.grand_total) FILTER (WHERE brl.department ILIKE 'Physiotherapy') AS physio_bill_total,
-            SUM(mr.amount) FILTER (WHERE brl.department ILIKE 'Physiotherapy') AS physio_paid
+        COUNT(*) AS bill_count,
+        SUM(br.grand_total) AS bill_total
         FROM bill_register br
-        JOIN bill_register_line brl ON brl.bill_register_id = br.id
-        LEFT JOIN leih_money_receipt mr ON mr.bill_id = br.id AND mr.state='confirm'
-        WHERE br.state='confirmed'
+        WHERE br.state = 'confirmed'
         AND br.create_date BETWEEN %s AND %s
+         AND EXISTS (
+          SELECT 1
+          FROM bill_register_line brl
+          WHERE brl.bill_register_id = br.id
+            AND brl.department ILIKE 'dental'
+      )
         """, (start_date, end_date))
 
-        d_count, d_total, d_paid, p_count, p_total, p_paid = cur.fetchone()
+        d_count, d_total = cur.fetchone()
 
-        result['dental_income'] = {'count': d_count or 0, 'amount': d_total or 0, 'paid': d_paid or 0}
-        result['physiotherapy_bill'] = {'count': p_count or 0, 'amount': p_total or 0, 'paid': p_paid or 0}
+        result['dental_income'] = {
+            'count': d_count or 0,
+            'amount': d_total or 0
+        }
+
+        cur.execute("""
+        SELECT
+        COUNT(*) AS bill_count,
+        SUM(br.grand_total) AS bill_total
+        FROM bill_register br
+        WHERE br.state = 'confirmed'
+        AND br.create_date BETWEEN %s AND %s
+        AND EXISTS (
+          SELECT 1
+          FROM bill_register_line brl
+          WHERE brl.bill_register_id = br.id
+            AND brl.department ILIKE 'physiotherapy'
+        )
+        """, (start_date, end_date))
+
+        p_count, p_total = cur.fetchone()
+
+        result['physiotherapy_bill'] = {
+            'count': p_count or 0,
+            'amount': p_total or 0
+        }
+
 
         # -----------------------------
         # 5. Admission & Surgery
@@ -223,22 +247,27 @@ def get_dashboard_data_db(params):
 # -----------------------------
         cur.execute("""
             SELECT
-                COUNT(*) AS count,
-                SUM(total) AS total,
-                SUM(mr.amount) AS paid
+                COUNT(os.id) AS count,
+                SUM(os.total) AS total,
+                (
+                    SELECT SUM(mr.amount)
+                    FROM leih_money_receipt mr
+                    WHERE mr.state = 'confirm'
+                    AND mr.optics_sale_id IS NOT NULL
+                    AND mr.create_date BETWEEN %s AND %s
+                ) AS paid
             FROM optics_sale os
-            LEFT JOIN leih_money_receipt mr
-                ON mr.optics_sale_id = os.id AND mr.state='confirm'
             WHERE os.date BETWEEN %s AND %s
-        """, (start_date, end_date))
+        """, (start_date, end_date, start_date, end_date))
 
         opt_count, opt_total, opt_paid = cur.fetchone()
 
         result['optics_income'] = {
             'count': opt_count or 0,
             'amount': opt_total or 0,
-            'paid': opt_paid or 0
+            'paid': opt_paid or 0,
         }
+
 
 
         # -----------------------------
@@ -283,7 +312,7 @@ def get_dashboard_data_db(params):
 
         result['pos_income'] = {
             'count': pos_count or 0,
-            'subtotal': pos_subtotal or 0
+            'subtotal': f"{(pos_subtotal or 0):.2f}"
         }
 
 
@@ -385,29 +414,33 @@ def get_dashboard_data_db(params):
         dental_pattern = '%dental%'
 
         cur.execute("""
-            SELECT
-                COALESCE(dp.id, 0) AS doctor_id,
-                COALESCE(dp.name, 'Undefined') AS doctor_name,
-                SUM(br.grand_total) AS income,
-                COUNT(DISTINCT br.id) AS bill_count
-            FROM bill_register br
-            JOIN bill_register_line brl
-                ON brl.bill_register_id = br.id
-            JOIN examination_entry ee
-                ON ee.id = brl.name
-            JOIN diagnosis_department dd
-                ON dd.id = ee.department
-            LEFT JOIN doctors_profile dp
-                ON dp.id = br.ref_doctors
+        SELECT
+        COALESCE(dp.id, 0) AS doctor_id,
+        COALESCE(dp.name, 'Undefined') AS doctor_name,
+        SUM(b.grand_total) AS income,
+        COUNT(b.id) AS bill_count
+        FROM (
+        SELECT DISTINCT
+            br.id,
+            br.grand_total,
+            br.ref_doctors
+        FROM bill_register br
+        JOIN bill_register_line brl
+            ON brl.bill_register_id = br.id
+        JOIN examination_entry ee
+            ON ee.id = brl.name
+        JOIN diagnosis_department dd
+            ON dd.id = ee.department
+        WHERE br.state = 'confirmed'
+          AND br.create_date BETWEEN %s AND %s
+          AND dd.name ILIKE %s
+         ) b
+        LEFT JOIN doctors_profile dp
+        ON dp.id = b.ref_doctors
+        GROUP BY dp.id, dp.name
+        ORDER BY income DESC
+        """, (start_date, end_date, dental_pattern))
 
-            WHERE br.state = 'confirmed'
-            AND br.create_date >= %s
-            AND br.create_date <= %s
-            AND dd.name ILIKE %s
-
-            GROUP BY dp.id, dp.name
-            ORDER BY income DESC
-            """, (start_date, end_date, dental_pattern))
 
         rows = cur.fetchall()
 
@@ -426,28 +459,31 @@ def get_dashboard_data_db(params):
         physio_pattern = '%physioth%'
 
         cur.execute("""
-            SELECT
-                COALESCE(dp.id, 0) AS doctor_id,
-                COALESCE(dp.name, 'Undefined') AS doctor_name,
-                SUM(br.grand_total) AS income,
-                COUNT(DISTINCT br.id) AS bill_count
-            FROM bill_register br
-            JOIN bill_register_line brl
-                ON brl.bill_register_id = br.id
-            JOIN examination_entry ee
-                ON ee.id = brl.name
-            JOIN diagnosis_department dd
-                ON dd.id = ee.department
-            LEFT JOIN doctors_profile dp
-                ON dp.id = br.ref_doctors
-
-            WHERE br.state = 'confirmed'
-            AND br.create_date >= %s
-            AND br.create_date <= %s
-            AND dd.name ILIKE %s
-
-            GROUP BY dp.id, dp.name
-            ORDER BY income DESC
+        SELECT
+        COALESCE(dp.id, 0) AS doctor_id,
+        COALESCE(dp.name, 'Undefined') AS doctor_name,
+        SUM(b.grand_total) AS income,
+        COUNT(b.id) AS bill_count
+        FROM (
+        SELECT DISTINCT
+            br.id,
+            br.grand_total,
+            br.ref_doctors
+        FROM bill_register br
+        JOIN bill_register_line brl
+            ON brl.bill_register_id = br.id
+        JOIN examination_entry ee
+            ON ee.id = brl.name
+        JOIN diagnosis_department dd
+            ON dd.id = ee.department
+        WHERE br.state = 'confirmed'
+          AND br.create_date BETWEEN %s AND %s
+          AND dd.name ILIKE %s
+            ) b
+         LEFT JOIN doctors_profile dp
+        ON dp.id = b.ref_doctors
+        GROUP BY dp.id, dp.name
+        ORDER BY income DESC
         """, (start_date, end_date, physio_pattern))
 
         rows = cur.fetchall()
@@ -545,9 +581,9 @@ def get_general_dashboard_data_db(params):
 
 # Process SQL rows
         for dept, count, amount, paid in rows:
-            d = dept.lower()
+            d = (dept or "").lower()
 
-            # Classification
+        # Classification
             if "mri" in d:
                 key = "MRI_income"
             elif "ct" in d and "scan" in d:
@@ -561,10 +597,11 @@ def get_general_dashboard_data_db(params):
             else:
                 key = "pathology_income"
 
-            # Add values (sum, not replace)
+        # Add values (sum, not replace)
             result[key]['count'] += count or 0
             result[key]['amount'] += amount or 0
             result[key]['paid'] += paid or 0
+
 
 
         # indoor patient
@@ -645,6 +682,73 @@ def get_general_dashboard_data_db(params):
         release_conn(conn)
 # end of general
 
+# fetching BLF data
+
+
+def get_blf_dashboard_data_db(params):
+
+    pg_pool = pool.SimpleConnectionPool(
+    1, 20,  # min 1, max 20 connections
+    dbname="blf_db",
+    user="dashboard",
+    password="dashboard",
+    host="192.168.2.49",
+    port=5432
+)
+
+    def get_conn():
+        return pg_pool.getconn()
+
+    def release_conn(conn):
+        pg_pool.putconn(conn)
+        conng = get_conn()
+        cur = conn.cursor()
+    conn = get_conn()
+    cur = conn.cursor()
+    result = {}
+
+    try:
+        # -----------------------------
+        # Prepare date ranges
+        # -----------------------------
+        if params and len(params) == 2:
+            start_date = params[0].split("T")[0] + " 00:00:00"
+            end_date = params[1].split("T")[0] + " 23:59:59"
+        else:
+            today = datetime.today().strftime("%Y-%m-%d")
+            start_date = today + " 00:00:00"
+            end_date = today + " 23:59:59"
+
+        # -----------------------------
+        # 4. POS Income
+        # -----------------------------
+        cur.execute("""
+        SELECT
+            COUNT(mr.id) AS count,
+            SUM(mr.amount) AS total
+        FROM money_receipt mr
+        WHERE mr.create_date BETWEEN %s AND %s
+        AND mr.state = 'done'
+    """, (start_date, end_date))
+
+        mr_count, mr_total = cur.fetchone()
+
+        result['blf_money_receipt'] = {
+        'count': mr_count or 0,
+        'amount': mr_total or 0
+    }
+
+        return result
+        
+
+    except Exception as e:
+        print("Error fetching dashboard:", e)
+        return {}
+    finally:
+        cur.close()
+        release_conn(conn)
+
+# end fetching blf data  
 
 
 def get_odoo_dashboard_data(params):
@@ -723,8 +827,10 @@ def api_data():
     # odoo_data = get_odoo_dashboard_data_via_http(params)
     eye_data = get_dashboard_data_db(params)
     general_data = get_general_dashboard_data_db(params)
+    blf_data=get_blf_dashboard_data_db(params)
     final_data.update(eye_data)
     final_data.update(general_data)
+    final_data.update(blf_data)
     
     # import pdb;pdb.set_trace()
     # odoo_data = get_odoo_dashboard_data()

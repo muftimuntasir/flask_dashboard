@@ -34,7 +34,7 @@ function updateFinancialStats(stats) {
 
    if (get("optics_sale_stat"))
     get("optics_sale_stat").textContent =
-      `${stats.optics_income?.amount ?? 0} / ${stats.optics_income?.count ?? 0}`;
+      `${stats.optics_income?.amount ?? 0} / ${stats.optics_income?.count ?? 0} / ${stats.optics_income?.paid ?? 0}`;
 
   if (get("noofsurgery_stat"))
     get("noofsurgery_stat").textContent =
@@ -102,6 +102,11 @@ function updateFinancialStats(stats) {
   if (get("cash_income_stat"))
     get("cash_income_stat").textContent =
     `${stats.legh_money_receipt?.amount ?? 0} / ${stats.legh_money_receipt?.count ?? 0}`;
+
+// fetching blf stat 
+  if (get("blf_cash_stat"))
+    get("blf_cash_stat").textContent =
+    `${stats.blf_money_receipt?.amount ?? 0} / ${stats.blf_money_receipt?.count ?? 0}`;
 
   
   const total_cash=
