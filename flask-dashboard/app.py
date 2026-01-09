@@ -164,7 +164,7 @@ def get_dashboard_data_db(params):
         COUNT(*) AS bill_count,
         SUM(br.grand_total) AS bill_total
         FROM bill_register br
-        WHERE br.state = 'confirmed'
+        WHERE br.state IN ('confirmed', 'released')
         AND br.create_date BETWEEN %s AND %s
          AND EXISTS (
           SELECT 1
@@ -186,7 +186,7 @@ def get_dashboard_data_db(params):
         COUNT(*) AS bill_count,
         SUM(br.grand_total) AS bill_total
         FROM bill_register br
-        WHERE br.state = 'confirmed'
+        WHERE br.state IN ('confirmed', 'released')
         AND br.create_date BETWEEN %s AND %s
         AND EXISTS (
           SELECT 1
@@ -380,7 +380,7 @@ def get_dashboard_data_db(params):
             JOIN bill_register_line brl ON brl.bill_register_id = br.id
             JOIN examination_entry ee ON ee.id = brl.name
             JOIN diagnosis_department dd ON dd.id = ee.department
-            WHERE br.state='confirmed'
+            WHERE br.state IN ('confirmed', 'released')
             AND br.ref_doctors IS NOT NULL
             AND br.create_date BETWEEN %s AND %s
             AND dd.name ILIKE ANY (ARRAY[
@@ -431,7 +431,7 @@ def get_dashboard_data_db(params):
             ON ee.id = brl.name
         JOIN diagnosis_department dd
             ON dd.id = ee.department
-        WHERE br.state = 'confirmed'
+        WHERE br.state IN ('confirmed', 'released')
           AND br.create_date BETWEEN %s AND %s
           AND dd.name ILIKE %s
          ) b
@@ -476,7 +476,7 @@ def get_dashboard_data_db(params):
             ON ee.id = brl.name
         JOIN diagnosis_department dd
             ON dd.id = ee.department
-        WHERE br.state = 'confirmed'
+        WHERE br.state IN ('confirmed', 'released')
           AND br.create_date BETWEEN %s AND %s
           AND dd.name ILIKE %s
             ) b
