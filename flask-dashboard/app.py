@@ -213,7 +213,7 @@ def get_dashboard_data_db(params):
         SUM(grand_total) AS total,
         COUNT(operation_date) AS surgery_count
         FROM leih_admission
-        WHERE state='activated'
+        WHERE state IN ('activated','released')
         AND operation_date BETWEEN %s AND %s
         """, (start_date, end_date))
         adm_count, adm_total, surgery_count = cur.fetchone()
@@ -225,7 +225,7 @@ def get_dashboard_data_db(params):
         WHERE state='confirm'
         AND admission_id IN (
         SELECT id FROM leih_admission
-        WHERE state='activated'
+        WHERE state IN ('activated','released')
         AND date BETWEEN %s AND %s
         )
         """, (start_date, end_date))
@@ -366,7 +366,7 @@ def get_dashboard_data_db(params):
                 SUM(la.grand_total) AS total_income,
                 COUNT(*) AS total_count
             FROM leih_admission la
-            WHERE la.state='activated'
+            WHERE la.state IN ('activated','released')
             AND la.date BETWEEN %s AND %s
             GROUP BY la.ref_doctors
 
