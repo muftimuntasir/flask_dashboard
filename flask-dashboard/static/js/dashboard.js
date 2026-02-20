@@ -93,11 +93,16 @@ function updateFinancialStats(stats) {
 
   if (get("indoor_income_stat"))
     get("indoor_income_stat").textContent =
-    `${stats.indoor_patient?.count ?? 0} / ${stats.indoor_patient?.paid ?? 0}`;
+    `${stats.indoor_patient?.count ?? 0} / ${stats.indoor_patient?.paid ?? 0}/${stats.indoor_patient?.total_admission ?? 0} `;
 
   if (get("pharmacy_income_stat"))
     get("pharmacy_income_stat").textContent =
     `${stats.general_pos_income?.subtotal ?? 0} / ${stats.general_pos_income?.count ?? 0}`;
+
+
+  if (get("indoor_pharmacy_stat"))
+    get("indoor_pharmacy_stat").textContent =
+    `${stats.indoor_pos_income?.in_pos_income ?? 0} / ${stats.indoor_pos_income?.in_pos_count ?? 0}`;
 
   if (get("cash_income_stat"))
     get("cash_income_stat").textContent =
@@ -529,6 +534,9 @@ function loadDoctorTable(department, stats) {
             </td>
             <td contenteditable="true" data-field="count" data-index="${index}">
                 ${doc.count}
+            </td>
+            <td contenteditable="true" data-field="count" data-index="${index}">
+                ${doc.investigation_income}
             </td>
         `;
 

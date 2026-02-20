@@ -210,13 +210,19 @@ def get_dashboard_data_db(params):
         cur.execute("""
         SELECT
         COUNT(*) AS admission_count,
-        SUM(grand_total) AS total,
-        COUNT(operation_date) AS surgery_count
+        SUM(grand_total) AS total
         FROM leih_admission
         WHERE state IN ('activated','released')
-        AND operation_date BETWEEN %s AND %s
+        AND date BETWEEN %s AND %s
         """, (start_date, end_date))
-        adm_count, adm_total, surgery_count = cur.fetchone()
+        adm_count, adm_total= cur.fetchone()
+
+        cur.execute("""
+        SELECT COUNT(*) AS surgery_count FROM leih_admission 
+                    WHERE state IN ('activated','released') and 
+                    operation_date BETWEEN %s AND %s
+        """,(start_date,end_date))
+        surgery_count = cur.fetchone()
 
 # Admission paid amount (separate & indexed)
         cur.execute("""
@@ -354,59 +360,104 @@ def get_dashboard_data_db(params):
 
     # for doctor income
 
+        # start doctor income (with investigation_income + no double-counting of br.grand_total)
+
         cur.execute("""
-            SELECT
-            dp.id AS doctor_id,
-            dp.name AS doctor_name,
-            SUM(total_income),
-            SUM(total_count)
-            FROM (
-            SELECT
-                la.ref_doctors AS doctor_id,
-                SUM(la.grand_total) AS total_income,
-                COUNT(*) AS total_count
-            FROM leih_admission la
-            WHERE la.state IN ('activated','released')
-            AND la.date BETWEEN %s AND %s
-            GROUP BY la.ref_doctors
+        SELECT
+        dp.id   AS doctor_id,
+        dp.name AS doctor_name,
+        SUM(total_income)         AS income,
+        SUM(total_count)          AS count,
+        SUM(investigation_income) AS investigation_income
+        FROM (
 
-            UNION ALL
+        -- 1) Admission income
+        SELECT
+            la.ref_doctors AS doctor_id,
+            SUM(la.grand_total) AS total_income,
+            COUNT(*) AS total_count,
+            0::numeric AS investigation_income
+        FROM leih_admission la
+        WHERE la.state IN ('activated','released')
+          AND la.date BETWEEN %s AND %s
+        GROUP BY la.ref_doctors
 
-            SELECT
-                br.ref_doctors AS doctor_id,
-                SUM(br.grand_total) AS total_income,
-                COUNT(*) AS total_count
-            FROM bill_register br
-            JOIN bill_register_line brl ON brl.bill_register_id = br.id
-            JOIN examination_entry ee ON ee.id = brl.name
-            JOIN diagnosis_department dd ON dd.id = ee.department
-            WHERE br.state IN ('confirmed', 'released')
-            AND br.ref_doctors IS NOT NULL
-            AND br.create_date BETWEEN %s AND %s
-            AND dd.name ILIKE ANY (ARRAY[
-                'Retinal Procedure',
-                'minor-ot',
-                'retinal surgery',
-                'other surgery'
-            ])
-            GROUP BY br.ref_doctors
+        UNION ALL
+
+        -- 2) Surgery/Procedure income from bill_register (COUNT and SUM at bill level, no duplication)
+        SELECT
+            br.ref_doctors AS doctor_id,
+            SUM(br.grand_total) AS total_income,
+            COUNT(*) AS total_count,
+            0::numeric AS investigation_income
+        FROM bill_register br
+        WHERE br.state IN ('confirmed', 'released')
+          AND br.ref_doctors IS NOT NULL
+          AND br.create_date BETWEEN %s AND %s
+          AND EXISTS (
+              SELECT 1
+              FROM bill_register_line brl
+              JOIN examination_entry ee ON ee.id = brl.name
+              JOIN diagnosis_department dd ON dd.id = ee.department
+              WHERE brl.bill_register_id = br.id
+                AND dd.name ILIKE ANY (ARRAY[
+                    'Retinal Procedure',
+                    'minor-ot',
+                    'retinal surgery',
+                    'other surgery'
+                ])
+          )
+        GROUP BY br.ref_doctors
+
+        UNION ALL
+
+        -- 3) Investigation income from bill_register (NOT in surgery list, bill-level, no duplication)
+        SELECT
+            br.ref_doctors AS doctor_id,
+            0::numeric AS total_income,
+            0::int     AS total_count,
+            SUM(br.grand_total) AS investigation_income
+        FROM bill_register br
+        WHERE br.state IN ('confirmed', 'released')
+          AND br.ref_doctors IS NOT NULL
+          AND br.create_date BETWEEN %s AND %s
+          AND EXISTS (
+              SELECT 1
+              FROM bill_register_line brl
+              JOIN examination_entry ee ON ee.id = brl.name
+              JOIN diagnosis_department dd ON dd.id = ee.department
+              WHERE brl.bill_register_id = br.id
+                AND NOT (dd.name ILIKE ANY (ARRAY[
+                    'Retinal Procedure',
+                    'minor-ot',
+                    'retinal surgery',
+                    'other surgery'
+                ]))
+          )
+        GROUP BY br.ref_doctors
+
         ) AS combined
         JOIN doctors_profile dp ON dp.id = combined.doctor_id
         GROUP BY dp.id, dp.name
         ORDER BY SUM(total_income) DESC
-        """, (start_date, end_date, start_date, end_date))
+        """, (start_date, end_date, start_date, end_date, start_date, end_date))
 
         rows = cur.fetchall()
 
         result['doctor_total_income'] = [
-    {
-        'doctor_id': r[0],
-        'doctor_name': r[1],
-        'income': r[2] or 0,
-        'count': r[3] or 0,
-    }
-    for r in rows
-    ]
+            {
+                'doctor_id': r[0],
+                'doctor_name': r[1],
+                'income': float(r[2] or 0),
+                'count': int(r[3] or 0),
+                'investigation_income': float(r[4] or 0),
+            }
+            for r in rows
+        ]
+
+# end doctor income
+
+
 # end doctor income
 
 #dental income
@@ -605,33 +656,45 @@ def get_general_dashboard_data_db(params):
 
 
         # indoor patient
-            cur.execute("""
+        cur.execute("""
             SELECT
-            (SELECT COUNT(*)
-            FROM hospital_admission
-            WHERE state = 'activated'
-            AND (emergency IS NOT TRUE)) AS admission_count,
-
-            (SELECT COALESCE(SUM(amount), 0)
-            FROM legh_money_receipt
-            WHERE state = 'confirm'
-            AND general_admission_id IS NOT NULL
-            AND general_admission_id IN (
-                SELECT id FROM hospital_admission
+                -- indoor admissions currently activated (no date filter like your original)
+                (SELECT COUNT(*)
+                FROM hospital_admission
                 WHERE state = 'activated'
-                  AND (emergency IS NOT TRUE)
-            )
-            AND create_date BETWEEN %s AND %s
-            ) AS total_paid
-            """, (start_date, end_date))
+                AND (emergency IS NOT TRUE)
+                ) AS admission_count,
 
-            indoor_count, total_paid = cur.fetchone()
+                -- total indoor patients within date range (states + date filter)
+                (SELECT COUNT(*)
+                FROM hospital_admission
+                WHERE state IN ('activated', 'released', 'release_wait')
+                AND (emergency IS NOT TRUE)
+                AND create_date BETWEEN %s AND %s
+                ) AS total_patient,
 
-            result['indoor_patient'] = {
-                'count': indoor_count or 0,
-                'paid': total_paid or 0
-            }
+                -- total paid within date range (your original)
+                (SELECT COALESCE(SUM(amount), 0)
+                FROM legh_money_receipt
+                WHERE state = 'confirm'
+                AND general_admission_id IS NOT NULL
+                AND general_admission_id IN (
+                    SELECT id
+                    FROM hospital_admission
+                    WHERE state IN ('activated','released','release_wait')
+                        AND (emergency IS NOT TRUE)
+                )
+                AND create_date BETWEEN %s AND %s
+                ) AS total_paid
+        """, (start_date, end_date, start_date, end_date))
 
+        indoor_count, total_patient, total_paid = cur.fetchone()
+
+        result['indoor_patient'] = {
+            'count': indoor_count or 0,
+            'total_admission': total_patient or 0,
+            'paid': total_paid or 0
+}
 
 
 
@@ -669,6 +732,27 @@ def get_general_dashboard_data_db(params):
         result['general_pos_income'] = {
             'count': pos_count or 0,
             'subtotal': pos_subtotal or 0
+        }
+
+
+        cur.execute("""
+            SELECT 
+                COUNT(id) AS count,
+                SUM(amount_total) 
+                - (
+                    SELECT COALESCE(SUM(amount_total), 0)
+                    FROM return_indoor_pos_order
+                    WHERE state IN ('draft', 'confirm')
+                    AND date_order BETWEEN %s AND %s
+                ) AS net_total
+            FROM indoor_pos_order
+            WHERE state IN ('draft', 'confirm')
+            AND date_order BETWEEN %s AND %s
+        """, (start_date, end_date, start_date, end_date))
+        in_pos,in_pos_income=cur.fetchone()
+        result['indoor_pos_income']={
+            'in_pos_count':in_pos or 0,
+            'in_pos_income':in_pos_income or 0
         }
 
         return result

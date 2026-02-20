@@ -19,9 +19,6 @@ def main():
     print(r.text[:1000])
     r.raise_for_status()
 
-    import pdb
-    pdb.set_trace()
-
     soup = BeautifulSoup(r.text, "html.parser")
 
     # Get JSON data from the Next.js script
