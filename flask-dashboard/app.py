@@ -102,13 +102,42 @@ pg_pool = pool.SimpleConnectionPool(
     port=5432
 )
 
+
+general_pg_pool = pool.SimpleConnectionPool(
+    1, 20,
+    dbname="GM",
+    user="dashboard",
+    password="dashboard",
+    host="192.168.2.89",
+    port=5432
+)
+
+blf_pg_pool = pool.SimpleConnectionPool(
+    1, 20,
+    dbname="blf_db",
+    user="dashboard",
+    password="dashboard",
+    host="192.168.2.49",
+    port=5432
+)
+
 def get_conn():
     return pg_pool.getconn()
 
 def release_conn(conn):
     pg_pool.putconn(conn)
 
+def get_general_conn():
+    return general_pg_pool.getconn()
 
+def release_general_conn(conn):
+    general_pg_pool.putconn(conn)
+
+def get_blf_conn():
+    return blf_pg_pool.getconn()
+
+def release_blf_conn(conn):
+    blf_pg_pool.putconn(conn)
 
 
 # -----------------------------
@@ -571,23 +600,7 @@ def get_dashboard_data_db(params):
 
 def get_general_dashboard_data_db(params):
 
-    pg_pool = pool.SimpleConnectionPool(
-    1, 20,  # min 1, max 20 connections
-    dbname="GM",
-    user="dashboard",
-    password="dashboard",
-    host="192.168.2.89",
-    port=5432
-)
-
-    def get_conn():
-        return pg_pool.getconn()
-
-    def release_conn(conn):
-        pg_pool.putconn(conn)
-        conng = get_conn()
-        cur = conn.cursor()
-    conn = get_conn()
+    conn = get_general_conn()
     cur = conn.cursor()
     result = {}
 
@@ -755,6 +768,74 @@ def get_general_dashboard_data_db(params):
             'in_pos_income':in_pos_income or 0
         }
 
+#general doctors income
+
+        doctor_ids = [17, 132, 564, 1924, 1362, 903, 18]
+
+        cur.execute("""
+        WITH indoor AS (
+            SELECT
+                ha.ref_doctors AS doctor_id,
+                COUNT(*) AS indoor_count,
+                COALESCE(SUM(ha.grand_total), 0) AS indoor_income   -- TODO: replace ha.indoor_amount
+            FROM hospital_admission ha
+            WHERE ha.state IN ('activated','released','release_wait')
+            AND ha.ref_doctors IS NOT NULL
+            AND ha.create_date BETWEEN %s AND %s
+            GROUP BY ha.ref_doctors
+        ),
+        investigation AS (
+            SELECT
+                br.ref_doctors AS doctor_id,
+                COALESCE(SUM(br.grand_total), 0) AS investigation_income
+            FROM bill_register br
+            WHERE br.state IN ('confirmed','released')
+            AND br.ref_doctors IS NOT NULL
+            AND br.ref_doctors = ANY(%s::int[])
+            AND br.create_date BETWEEN %s AND %s
+            GROUP BY br.ref_doctors
+        )
+        SELECT
+            dp.id AS doctor_id,
+            dp.name AS doctor_name,
+            i.indoor_income,
+            i.indoor_count,
+            COALESCE(inv.investigation_income, 0) AS investigation_income
+        FROM indoor i
+        JOIN doctors_profile dp ON dp.id = i.doctor_id
+        LEFT JOIN investigation inv ON inv.doctor_id = i.doctor_id
+
+        -- ✅ don't show doctors who have bill_register but are NOT in allowed list
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM bill_register brx
+            WHERE brx.ref_doctors = i.doctor_id
+            AND brx.ref_doctors IS NOT NULL
+            AND brx.state IN ('confirmed','released')
+            AND brx.create_date BETWEEN %s AND %s
+            AND NOT (brx.ref_doctors = ANY(%s::int[]))
+        )
+
+        ORDER BY i.indoor_income DESC, i.indoor_count DESC
+        """, (
+            start_date, end_date,              # indoor date range
+            doctor_ids, start_date, end_date,  # investigation date range + allowed list
+            start_date, end_date, doctor_ids   # exclusion date range + allowed list
+        ))
+
+        rows = cur.fetchall()
+
+        result['doctor_income'] = [
+            {
+                "doctor_id": r[0],
+                "doctor_name": r[1],
+                "indoor_income": float(r[2] or 0),
+                "count_indoor": int(r[3] or 0),
+                "investigation_income": float(r[4] or 0),
+            }
+            for r in rows
+        ]
+
         return result
         
 
@@ -763,7 +844,7 @@ def get_general_dashboard_data_db(params):
         return {}
     finally:
         cur.close()
-        release_conn(conn)
+        release_general_conn(conn)
 # end of general
 
 # fetching BLF data
@@ -771,23 +852,7 @@ def get_general_dashboard_data_db(params):
 
 def get_blf_dashboard_data_db(params):
 
-    pg_pool = pool.SimpleConnectionPool(
-    1, 20,  # min 1, max 20 connections
-    dbname="blf_db",
-    user="dashboard",
-    password="dashboard",
-    host="192.168.2.49",
-    port=5432
-)
-
-    def get_conn():
-        return pg_pool.getconn()
-
-    def release_conn(conn):
-        pg_pool.putconn(conn)
-        conng = get_conn()
-        cur = conn.cursor()
-    conn = get_conn()
+    conn = get_blf_conn()
     cur = conn.cursor()
     result = {}
 
@@ -830,7 +895,7 @@ def get_blf_dashboard_data_db(params):
         return {}
     finally:
         cur.close()
-        release_conn(conn)
+        release_blf_conn(conn)
 
 # end fetching blf data  
 
