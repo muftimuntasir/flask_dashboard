@@ -102,42 +102,13 @@ pg_pool = pool.SimpleConnectionPool(
     port=5432
 )
 
-
-general_pg_pool = pool.SimpleConnectionPool(
-    1, 20,
-    dbname="GM",
-    user="dashboard",
-    password="dashboard",
-    host="192.168.2.89",
-    port=5432
-)
-
-blf_pg_pool = pool.SimpleConnectionPool(
-    1, 20,
-    dbname="blf_db",
-    user="dashboard",
-    password="dashboard",
-    host="192.168.2.49",
-    port=5432
-)
-
 def get_conn():
     return pg_pool.getconn()
 
 def release_conn(conn):
     pg_pool.putconn(conn)
 
-def get_general_conn():
-    return general_pg_pool.getconn()
 
-def release_general_conn(conn):
-    general_pg_pool.putconn(conn)
-
-def get_blf_conn():
-    return blf_pg_pool.getconn()
-
-def release_blf_conn(conn):
-    blf_pg_pool.putconn(conn)
 
 
 # -----------------------------
@@ -392,84 +363,85 @@ def get_dashboard_data_db(params):
         # start doctor income (with investigation_income + no double-counting of br.grand_total)
 
         cur.execute("""
+        WITH admission_income AS (
+            SELECT
+                la.ref_doctors AS doctor_id,
+                SUM(la.grand_total) AS total_income,
+                COUNT(*) AS total_count,
+                0::numeric AS investigation_income
+            FROM leih_admission la
+            WHERE la.state IN ('activated','released')
+            AND la.date BETWEEN %s AND %s
+            AND la.ref_doctors IS NOT NULL
+            GROUP BY la.ref_doctors
+        ),
+        bill_classified AS (
+            SELECT
+                br.id,
+                br.ref_doctors,
+                br.grand_total,
+                MAX(
+                    CASE
+                        WHEN dd.name ILIKE ANY (ARRAY[
+                            'Retinal Procedure',
+                            'minor-ot',
+                            'retinal surgery',
+                            'other surgery'
+                        ])
+                        THEN 1 ELSE 0
+                    END
+                ) AS is_surgery
+            FROM bill_register br
+            JOIN bill_register_line brl
+            ON brl.bill_register_id = br.id
+            JOIN examination_entry ee
+            ON ee.id = brl.name
+            JOIN diagnosis_department dd
+            ON dd.id = ee.department
+            WHERE br.state IN ('confirmed', 'released')
+            AND br.ref_doctors IS NOT NULL
+            AND br.create_date BETWEEN %s AND %s
+            GROUP BY br.id, br.ref_doctors, br.grand_total
+        ),
+        surgery_income AS (
+            SELECT
+                ref_doctors AS doctor_id,
+                SUM(grand_total) AS total_income,
+                COUNT(*) AS total_count,
+                0::numeric AS investigation_income
+            FROM bill_classified
+            WHERE is_surgery = 1
+            GROUP BY ref_doctors
+        ),
+        investigation_income AS (
+            SELECT
+                ref_doctors AS doctor_id,
+                0::numeric AS total_income,
+                0::int AS total_count,
+                SUM(grand_total) AS investigation_income
+            FROM bill_classified
+            WHERE is_surgery = 0
+            GROUP BY ref_doctors
+        ),
+        combined AS (
+            SELECT * FROM admission_income
+            UNION ALL
+            SELECT * FROM surgery_income
+            UNION ALL
+            SELECT * FROM investigation_income
+        )
         SELECT
-        dp.id   AS doctor_id,
-        dp.name AS doctor_name,
-        SUM(total_income)         AS income,
-        SUM(total_count)          AS count,
-        SUM(investigation_income) AS investigation_income
-        FROM (
-
-        -- 1) Admission income
-        SELECT
-            la.ref_doctors AS doctor_id,
-            SUM(la.grand_total) AS total_income,
-            COUNT(*) AS total_count,
-            0::numeric AS investigation_income
-        FROM leih_admission la
-        WHERE la.state IN ('activated','released')
-          AND la.date BETWEEN %s AND %s
-        GROUP BY la.ref_doctors
-
-        UNION ALL
-
-        -- 2) Surgery/Procedure income from bill_register (COUNT and SUM at bill level, no duplication)
-        SELECT
-            br.ref_doctors AS doctor_id,
-            SUM(br.grand_total) AS total_income,
-            COUNT(*) AS total_count,
-            0::numeric AS investigation_income
-        FROM bill_register br
-        WHERE br.state IN ('confirmed', 'released')
-          AND br.ref_doctors IS NOT NULL
-          AND br.create_date BETWEEN %s AND %s
-          AND EXISTS (
-              SELECT 1
-              FROM bill_register_line brl
-              JOIN examination_entry ee ON ee.id = brl.name
-              JOIN diagnosis_department dd ON dd.id = ee.department
-              WHERE brl.bill_register_id = br.id
-                AND dd.name ILIKE ANY (ARRAY[
-                    'Retinal Procedure',
-                    'minor-ot',
-                    'retinal surgery',
-                    'other surgery'
-                ])
-          )
-        GROUP BY br.ref_doctors
-
-        UNION ALL
-
-        -- 3) Investigation income from bill_register (NOT in surgery list, bill-level, no duplication)
-        SELECT
-            br.ref_doctors AS doctor_id,
-            0::numeric AS total_income,
-            0::int     AS total_count,
-            SUM(br.grand_total) AS investigation_income
-        FROM bill_register br
-        WHERE br.state IN ('confirmed', 'released')
-          AND br.ref_doctors IS NOT NULL
-          AND br.create_date BETWEEN %s AND %s
-          AND EXISTS (
-              SELECT 1
-              FROM bill_register_line brl
-              JOIN examination_entry ee ON ee.id = brl.name
-              JOIN diagnosis_department dd ON dd.id = ee.department
-              WHERE brl.bill_register_id = br.id
-                AND NOT (dd.name ILIKE ANY (ARRAY[
-                    'Retinal Procedure',
-                    'minor-ot',
-                    'retinal surgery',
-                    'other surgery'
-                ]))
-          )
-        GROUP BY br.ref_doctors
-
-        ) AS combined
-        JOIN doctors_profile dp ON dp.id = combined.doctor_id
+            dp.id AS doctor_id,
+            dp.name AS doctor_name,
+            SUM(combined.total_income) AS income,
+            SUM(combined.total_count) AS count,
+            SUM(combined.investigation_income) AS investigation_income
+        FROM combined
+        JOIN doctors_profile dp
+        ON dp.id = combined.doctor_id
         GROUP BY dp.id, dp.name
-        ORDER BY SUM(total_income) DESC
-        """, (start_date, end_date, start_date, end_date, start_date, end_date))
+        ORDER BY SUM(combined.total_income) DESC
+        """, (start_date, end_date, start_date, end_date))
 
         rows = cur.fetchall()
 
@@ -600,7 +572,23 @@ def get_dashboard_data_db(params):
 
 def get_general_dashboard_data_db(params):
 
-    conn = get_general_conn()
+    pg_pool = pool.SimpleConnectionPool(
+    1, 20,  # min 1, max 20 connections
+    dbname="GM",
+    user="dashboard",
+    password="dashboard",
+    host="192.168.2.89",
+    port=5432
+)
+
+    def get_conn():
+        return pg_pool.getconn()
+
+    def release_conn(conn):
+        pg_pool.putconn(conn)
+        conng = get_conn()
+        cur = conn.cursor()
+    conn = get_conn()
     cur = conn.cursor()
     result = {}
 
@@ -844,7 +832,7 @@ def get_general_dashboard_data_db(params):
         return {}
     finally:
         cur.close()
-        release_general_conn(conn)
+        release_conn(conn)
 # end of general
 
 # fetching BLF data
@@ -852,7 +840,23 @@ def get_general_dashboard_data_db(params):
 
 def get_blf_dashboard_data_db(params):
 
-    conn = get_blf_conn()
+    pg_pool = pool.SimpleConnectionPool(
+    1, 20,  # min 1, max 20 connections
+    dbname="blf_db",
+    user="dashboard",
+    password="dashboard",
+    host="192.168.2.49",
+    port=5432
+)
+
+    def get_conn():
+        return pg_pool.getconn()
+
+    def release_conn(conn):
+        pg_pool.putconn(conn)
+        conng = get_conn()
+        cur = conn.cursor()
+    conn = get_conn()
     cur = conn.cursor()
     result = {}
 
@@ -895,7 +899,7 @@ def get_blf_dashboard_data_db(params):
         return {}
     finally:
         cur.close()
-        release_blf_conn(conn)
+        release_conn(conn)
 
 # end fetching blf data  
 
